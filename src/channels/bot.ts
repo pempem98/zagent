@@ -22,7 +22,6 @@ interface BotUpdate {
     from?: { id?: string; display_name?: string; is_bot?: boolean };
     chat?: { id?: string; chat_type?: string };
     text?: string;
-    caption?: string;
     message_id?: string;
     date?: number;
   };
@@ -114,6 +113,8 @@ export class ZaloBotChannel implements ZaloChannel {
     this.seen.add(messageId);
     if (this.seen.size > 1000) this.seen.delete(this.seen.values().next().value!);
 
+    const kind = KIND_BY_EVENT[update.event_name ?? ""] ?? "other";
+
     return {
       channel: this.id,
       threadId,
@@ -121,8 +122,8 @@ export class ZaloBotChannel implements ZaloChannel {
       messageId,
       senderId: message.from?.id ?? threadId,
       senderName: message.from?.display_name ?? "",
-      kind: KIND_BY_EVENT[update.event_name ?? ""] ?? "other",
-      text: message.text ?? message.caption ?? "",
+      kind,
+      text: kind === "text" ? (message.text ?? "") : "",
       // The platform only delivers group messages that @mention the bot.
       addressed: true,
       timestamp: message.date ?? Date.now(),

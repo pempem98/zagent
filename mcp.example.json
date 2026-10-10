@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "bds": {
+      "command": "npx",
+      "args": ["tsx", "mcp/real-estate.ts"],
+      "env": {
+        "LEADS_FILE": "data/leads.csv"
+      },
+      "audience": "all"
+    }
+  }
+}

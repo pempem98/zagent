@@ -1,0 +1,20 @@
+# Everything not needed to build the image. Settings, content and state are mounted at run time.
+node_modules
+data
+workspace
+.env
+.env.*
+mcp.json
+tools.json
+
+.git
+.gitignore
+.dockerignore
+Dockerfile
+docker-compose.yml
+.vscode
+.claude
+.smoke
+*.md
+*.example.json
+*.log

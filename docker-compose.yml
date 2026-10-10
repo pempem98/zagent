@@ -1,0 +1,30 @@
+services:
+  bot:
+    build: .
+    image: zalo-agent
+    container_name: zalo-agent
+    restart: unless-stopped
+    # Reaps the short-lived child processes started for MCP servers.
+    init: true
+    environment:
+      TZ: Asia/Ho_Chi_Minh
+    volumes:
+      # Settings. The bot reads .env itself, exactly as it does outside Docker.
+      - ./.env:/app/.env:ro
+      # Both files must exist before the first start (copy them from the *.example.json files),
+      # otherwise Docker creates an empty folder with that name. The bot treats such a folder as
+      # "not configured", but you will have to delete it before adding the real file.
+      - ./mcp.json:/app/mcp.json:ro
+      - ./tools.json:/app/tools.json:ro
+      # Content you author: system prompt, procedures, documents, listings.
+      - ./workspace:/app/workspace
+      # State the bot writes: sessions, memory, contacts, message logs, console logs, Drive mirror.
+      - ./data:/app/data
+    # Console output is also kept by Docker; cap it by size (Docker cannot expire it by age).
+    # The dated files in data/logs and data/messages are what LOG_RETENTION_DAYS cleans up.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+    stop_grace_period: 20s

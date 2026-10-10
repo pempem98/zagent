@@ -1,3 +1,13 @@
 node_modules/
 data/
 .env
+
+# Local connection settings; may hold internal URLs or API keys
+mcp.json
+tools.json
+
+# Your own documents and listings stay out of the repository by default.
+# Delete these lines to version them.
+workspace/knowledge/*
+workspace/listings/*
+!workspace/**/.gitkeep

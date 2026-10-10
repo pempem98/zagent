@@ -15,7 +15,7 @@ export interface IncomingMessage extends Target {
   senderId: string;
   senderName: string;
   kind: MessageKind;
-  /** Empty for non-text messages without a caption. */
+  /** Text of the message (emoji included). Empty for media, which the bot does not process. */
   text: string;
   /** True in a 1:1 chat, or in a group when the bot/account was @mentioned. */
   addressed: boolean;

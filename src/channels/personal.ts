@@ -1,8 +1,22 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { LoginQRCallbackEventType, ThreadType, Zalo, type API, type Credentials, type Message } from "zca-js";
+import {
+  LoginQRCallbackEventType,
+  ThreadType,
+  Zalo,
+  type API,
+  type Credentials,
+  type Message,
+} from "zca-js";
 import { chunkText, sleep } from "./text.js";
-import type { ChannelCapabilities, IncomingMessage, MessageHandler, Target, ZaloChannel } from "./types.js";
+import type {
+  ChannelCapabilities,
+  IncomingMessage,
+  MessageHandler,
+  MessageKind,
+  Target,
+  ZaloChannel,
+} from "./types.js";
 
 export interface PersonalChannelOptions {
   /** Where the logged-in session (cookie, imei, user agent) is kept. Treat as a secret. */
@@ -122,7 +136,7 @@ export class ZaloPersonalChannel implements ZaloChannel {
     if (message.isSelf) return null;
     const { data } = message;
     const isGroup = message.type === ThreadType.Group;
-    const isText = typeof data.content === "string";
+    const kind = KIND_BY_MSG_TYPE[data.msgType] ?? (typeof data.content === "string" ? "text" : "other");
     const mentions = message.type === ThreadType.Group ? message.data.mentions : undefined;
 
     return {
@@ -132,8 +146,8 @@ export class ZaloPersonalChannel implements ZaloChannel {
       messageId: data.msgId,
       senderId: data.uidFrom,
       senderName: data.dName,
-      kind: isText ? "text" : "other",
-      text: isText ? (data.content as string) : "",
+      kind,
+      text: kind === "text" && typeof data.content === "string" ? data.content : "",
       addressed: !isGroup || (mentions?.some((mention) => mention.uid === this.ownId) ?? false),
       timestamp: Number(data.ts) || Date.now(),
       raw: message,
@@ -145,6 +159,13 @@ export class ZaloPersonalChannel implements ZaloChannel {
     return this.api;
   }
 }
+
+const KIND_BY_MSG_TYPE: Record<string, MessageKind> = {
+  webchat: "text",
+  "chat.photo": "image",
+  "chat.sticker": "sticker",
+  "chat.voice": "voice",
+};
 
 function threadType(target: Target): ThreadType {
   return target.isGroup ? ThreadType.Group : ThreadType.User;

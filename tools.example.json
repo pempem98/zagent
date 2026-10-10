@@ -1,0 +1,28 @@
+{
+  "tools": [
+    {
+      "name": "tra_don_hang",
+      "description": "Tra trạng thái một đơn hàng theo mã đơn. Dùng khi khách hỏi đơn của họ đang ở đâu.",
+      "audience": "all",
+      "method": "GET",
+      "url": "https://api.example.com/orders/{ma_don}",
+      "headers": { "Authorization": "Bearer ${ORDER_API_KEY}" },
+      "parameters": {
+        "ma_don": { "type": "string", "description": "Mã đơn hàng, ví dụ DH-1024", "required": true }
+      }
+    },
+    {
+      "name": "tao_yeu_cau_ho_tro",
+      "description": "Tạo một yêu cầu hỗ trợ kỹ thuật trên hệ thống. Chỉ dùng khi quản trị viên yêu cầu.",
+      "audience": "admin",
+      "method": "POST",
+      "url": "https://api.example.com/tickets",
+      "headers": { "Authorization": "Bearer ${ORDER_API_KEY}" },
+      "parameters": {
+        "tieu_de": { "type": "string", "description": "Tiêu đề ngắn", "required": true },
+        "noi_dung": { "type": "string", "description": "Mô tả chi tiết", "required": true },
+        "muc_do": { "type": "string", "enum": ["thap", "trung_binh", "cao"], "description": "Mức độ ưu tiên" }
+      }
+    }
+  ]
+}

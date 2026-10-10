@@ -57,7 +57,8 @@ export class ZaloHub {
  */
 export function createHubFromEnv(env: NodeJS.ProcessEnv = process.env): ZaloHub {
   const channels: ZaloChannel[] = [];
-  if (env.ZALO_BOT_TOKEN) channels.push(new ZaloBotChannel({ token: env.ZALO_BOT_TOKEN }));
+  // ZALO_BOT_API_URL points the bot at another server; it exists for end-to-end tests.
+  if (env.ZALO_BOT_TOKEN) channels.push(new ZaloBotChannel({ token: env.ZALO_BOT_TOKEN, baseUrl: env.ZALO_BOT_API_URL || undefined }));
   if (env.ZALO_PERSONAL === "1") channels.push(new ZaloPersonalChannel());
   return new ZaloHub(channels);
 }
