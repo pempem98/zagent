@@ -283,10 +283,15 @@ Bot ghi lại mọi người và mọi nhóm nó gặp, cùng toàn bộ tin nh�
 
 | Lưu gì | Ở đâu | Nội dung |
 |---|---|---|
-| Người dùng và nhóm | `data/contacts.json` | Tên, ID, lần đầu và lần cuối gặp, số tin, đã nhắn riêng cho bot chưa, có nhận thông báo không; với nhóm: những ai đã nhắn |
+| Người dùng và nhóm | `data/contacts.json` | Tên, ID, lần đầu và lần cuối gặp, số tin, đã nhắn riêng cho bot chưa, có nhận thông báo không; với nhóm: tên và số thành viên (nếu kênh cho biết), những ai đã nhắn |
 | Mọi tin nhắn đến và đi | `data/messages/<ngày>/<kênh>-<hội thoại>.jsonl` | Mỗi dòng một tin: thời điểm, người gửi, loại, nội dung. Kể cả tin trong nhóm mà bot không trả lời, và tin không phải chữ |
 
-Admin nhắn `/users` hoặc `/groups` (trong chat riêng với bot) để xem danh sách.
+Admin nhắn `/users` hoặc `/groups` (trong chat riêng với bot) để xem danh sách. Hỏi bằng lời thường cũng được ("bot đang ở nhóm nào?"): bot tra dữ liệu thật bằng công cụ `list_contacts` rồi mới trả lời.
+
+Bot biết một nhóm từ khi nào thì tuỳ kênh:
+
+- Kênh `personal`: bot lấy toàn bộ danh sách nhóm (kèm tên và số thành viên) mỗi lần kết nối, và cập nhật ngay khi tài khoản được thêm vào hoặc rời khỏi một nhóm. Không cần ai nhắn trong nhóm.
+- Kênh `bot`: Zalo Bot Platform không có API liệt kê nhóm, và tài liệu không nêu sự kiện nào báo bot được thêm vào nhóm. Nhóm chỉ được ghi nhận sau khi có người @mention bot trong nhóm đó một lần. Zalo cũng không cho bot biết tên nhóm: khi một nhóm mới xuất hiện, bot nhắn admin để xin tên, và admin đặt bằng `/namegroup <ID nhóm> <tên>` hoặc nói thẳng với bot ("nhóm zgr-... tên là Demo"; trong nhóm thì "@bot đặt tên nhóm này là Demo"). Tên này chỉ nằm trong sổ của bot, không đổi tên nhóm trên Zalo. Mọi sự kiện không phải tin nhắn mà nền tảng gửi tới đều được ghi vào log (`[bot] update that is not a message`), và nếu sự kiện đó nêu một nhóm thì bot lưu nhóm ấy luôn.
 
 ### Bot trong nhóm và cộng đồng
 
@@ -353,6 +358,7 @@ Lệnh trong khung chat:
 | `/forget` | Mọi người | Xoá lịch sử trò chuyện và ghi nhớ về mình |
 | `/stop`, `/start` | Mọi người | Tắt, bật nhận thông báo chung |
 | `/users`, `/groups` | Admin | Danh sách người dùng và nhóm bot đã gặp |
+| `/namegroup <ID nhóm> <tên>` | Admin | Đặt tên cho một nhóm trong sổ của bot |
 | `/broadcast [users\|groups\|all] <nội dung>` | Admin | Soạn bản nháp thông báo hàng loạt |
 | `/confirm <mã>`, `/cancel <mã>` | Admin | Gửi hoặc huỷ một bản nháp thông báo |
 | `/reload` | Admin | Nạp lại kho tài liệu |

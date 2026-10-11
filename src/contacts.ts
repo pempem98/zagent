@@ -1,4 +1,5 @@
-import type { ChannelId, IncomingMessage, Target } from "./channels/types.js";
+import type { Tool } from "./ai/tools.js";
+import type { ChannelId, GroupUpdate, IncomingMessage, Target } from "./channels/types.js";
 import { JsonFile } from "./store.js";
 
 export interface UserRecord {
@@ -17,8 +18,13 @@ export interface UserRecord {
 export interface GroupRecord {
   channel: ChannelId;
   threadId: string;
+  /** Absent when the platform gives none (the Bot Platform never does). */
+  name?: string;
+  /** Size of the group as the platform reports it; absent when it does not. */
+  memberCount?: number;
   firstSeen: number;
   lastSeen: number;
+  /** Zero for a group known only from a join event or the group list. */
   messages: number;
   /** People seen talking in the group: id -> last known name. */
   members: Record<string, string>;
@@ -32,6 +38,10 @@ interface Store {
   groups: Record<string, GroupRecord>;
 }
 
+const BOT_GROUPS_CAVEAT =
+  "Lưu ý: trên kênh bot (Zalo Bot Platform), Zalo không cho liệt kê nhóm và thường không báo khi bot được thêm vào nhóm. Nhóm trên kênh này thường chỉ hiện ở đây sau khi có người @mention bot trong nhóm đó ít nhất một lần.";
+const UNNAMED_GROUPS_HINT = "Nhóm chưa có tên: đặt bằng /namegroup <ID nhóm> <tên>, hoặc bảo bot tên của nhóm.";
+const MAX_GROUP_NAME_CHARS = 100;
 const MAX_MEMBERS_PER_GROUP = 2000;
 const SAVE_DELAY_MS = 3000;
 
@@ -40,7 +50,14 @@ export class Contacts {
   private readonly file: JsonFile<Store>;
   private saveTimer?: NodeJS.Timeout;
 
-  constructor(path: string) {
+  /** Called when a group turns up and the platform gave it no name; `by` is who wrote there, if anyone. */
+  onUnnamedGroup?: (group: GroupRecord, by: string) => void;
+
+  constructor(
+    path: string,
+    /** Channels in use; decides which caveats the group list carries. */
+    private readonly channels: ChannelId[] = [],
+  ) {
     this.file = new JsonFile<Store>(path, { users: {}, groups: {} });
   }
 
@@ -68,7 +85,9 @@ export class Contacts {
     if (!message.isGroup) user.direct = true;
 
     if (message.isGroup) {
-      const group = (groups[`${message.channel}:${message.threadId}`] ??= {
+      const key = `${message.channel}:${message.threadId}`;
+      const isNew = !(key in groups);
+      const group = (groups[key] ??= {
         channel: message.channel,
         threadId: message.threadId,
         firstSeen: now,
@@ -76,6 +95,8 @@ export class Contacts {
         messages: 0,
         members: {},
       });
+      group.name = message.threadName || group.name;
+      if (isNew && !group.name) this.onUnnamedGroup?.(group, message.senderName);
       group.lastSeen = now;
       group.messages++;
       if (message.senderId in group.members || Object.keys(group.members).length < MAX_MEMBERS_PER_GROUP) {
@@ -83,6 +104,53 @@ export class Contacts {
       }
     }
     this.saveSoon();
+  }
+
+  /** Applies what a channel learned about group membership without a message being sent there. */
+  recordGroup(update: GroupUpdate): void {
+    const { groups } = this.file.data;
+    if (update.type === "left") {
+      if (!(`${update.channel}:${update.threadId}` in groups)) return;
+      delete groups[`${update.channel}:${update.threadId}`];
+      console.log(`[${update.channel}] no longer in group ${update.threadId}`);
+    } else {
+      const seen = update.type === "list" ? update.groups : [update.group];
+      const now = Date.now();
+      for (const sighting of seen) {
+        const key = `${sighting.channel}:${sighting.threadId}`;
+        const isNew = !(key in groups);
+        if (isNew) console.log(`[${sighting.channel}] new group ${sighting.name || sighting.threadId}`);
+        const group = (groups[key] ??= { channel: sighting.channel, threadId: sighting.threadId, firstSeen: now, lastSeen: now, messages: 0, members: {} });
+        group.name = sighting.name || group.name;
+        // Not for a whole list: one failed name lookup there must not flood the admins.
+        if (isNew && !group.name && update.type === "seen") this.onUnnamedGroup?.(group, "");
+        group.memberCount = sighting.memberCount ?? group.memberCount;
+      }
+      if (update.type === "list") {
+        const current = new Set(seen.map((sighting) => sighting.threadId));
+        for (const [key, group] of Object.entries(groups)) {
+          if (group.channel !== update.channel || current.has(group.threadId)) continue;
+          delete groups[key];
+          console.log(`[${update.channel}] no longer in group ${group.name || group.threadId}`);
+        }
+      }
+    }
+    this.saveSoon();
+  }
+
+  /**
+   * Gives a group the name an admin chose, for platforms that tell none. `ref` is the thread id,
+   * with or without its channel prefix. Returns the text to answer with.
+   */
+  nameGroup(ref: string, name: string): string {
+    const { groups } = this.file.data;
+    const group = groups[ref.trim()] ?? this.groups.find((candidate) => candidate.threadId === ref.trim());
+    if (!group) return `Không có nhóm nào mang ID "${ref.trim()}". Nhắn /groups để xem ID các nhóm.`;
+    const label = name.replace(/\s+/g, " ").trim().slice(0, MAX_GROUP_NAME_CHARS);
+    if (!label) return "Thiếu tên nhóm.";
+    group.name = label;
+    this.saveSoon();
+    return `Đã đặt tên nhóm ${group.channel}:${group.threadId} là "${label}".`;
   }
 
   /** Returns false when the person is not known yet (never wrote to the bot). */
@@ -112,7 +180,7 @@ export class Contacts {
       }
     }
     if (audience !== "users") {
-      for (const group of this.groups) recipients.push({ channel: group.channel, threadId: group.threadId, isGroup: true, label: `nhóm ${group.threadId}` });
+      for (const group of this.groups) recipients.push({ channel: group.channel, threadId: group.threadId, isGroup: true, label: `nhóm ${group.name || group.threadId}` });
     }
     return recipients;
   }
@@ -126,9 +194,61 @@ export class Contacts {
 
   describeGroups(limit = 20): string {
     const groups = this.groups.sort((a, b) => b.lastSeen - a.lastSeen);
-    if (groups.length === 0) return "Bot chưa thấy nhóm nào.";
-    const lines = groups.slice(0, limit).map((group) => `- ${group.channel}:${group.threadId} | ${Object.keys(group.members).length} người đã nhắn | ${group.messages} tin | ${ago(group.lastSeen)}`);
-    return [`${groups.length} nhóm.`, ...lines, groups.length > limit ? `(và ${groups.length - limit} nhóm khác)` : ""].filter(Boolean).join("\n");
+    // The Bot Platform has no group list and announces no joins, so that channel's list can lag.
+    const caveat = this.channels.includes("bot") ? BOT_GROUPS_CAVEAT : "";
+    if (groups.length === 0) return ["Bot chưa thấy nhóm nào.", caveat].filter(Boolean).join("\n");
+    const lines = groups.slice(0, limit).map((group) =>
+      [
+        `- ${group.name || "(chưa có tên)"}`,
+        `${group.channel}:${group.threadId}`,
+        group.memberCount ? `${group.memberCount} thành viên` : "",
+        group.messages ? `${Object.keys(group.members).length} người đã nhắn | ${group.messages} tin | ${ago(group.lastSeen)}` : "chưa có tin nào",
+      ]
+        .filter(Boolean)
+        .join(" | "),
+    );
+    const unnamed = groups.some((group) => !group.name) ? UNNAMED_GROUPS_HINT : "";
+    return [`${groups.length} nhóm.`, ...lines, groups.length > limit ? `(và ${groups.length - limit} nhóm khác)` : "", unnamed, caveat].filter(Boolean).join("\n");
+  }
+
+  tools(): Tool[] {
+    return [
+      {
+        name: "list_contacts",
+        description:
+          "Đọc từ dữ liệu thật danh sách người dùng hoặc danh sách nhóm mà bot đang biết. BẮT BUỘC gọi mỗi khi quản trị viên hỏi bot đang ở những nhóm nào, đã có nhóm chưa, có bao nhiêu người dùng, hoặc ai đã nhắn cho bot; không trả lời các câu đó theo trí nhớ hay theo các tin trước trong cuộc trò chuyện, vì danh sách thay đổi liên tục.",
+        parameters: {
+          type: "object",
+          properties: { kind: { type: "string", enum: ["users", "groups"], description: "users: người dùng; groups: các nhóm." } },
+          required: ["kind"],
+        },
+        audience: "admin",
+        run: async (args, { message }) => {
+          // Same rule as /users and /groups: the list must not be shown where a whole group reads it.
+          if (message.isGroup) throw new Error("Chỉ xem được danh sách này trong cuộc trò chuyện riêng với bot");
+          return args.kind === "groups" ? this.describeGroups(50) : this.describeUsers(50);
+        },
+      },
+      {
+        name: "name_group",
+        description:
+          "Đặt hoặc đổi tên gọi của một nhóm trong danh sách của bot, để quản trị viên nhận ra nhóm (Zalo Bot Platform không cho bot biết tên nhóm). Dùng khi quản trị viên cho biết tên của một nhóm, hoặc bảo đặt tên cho nhóm. Việc này chỉ đổi tên trong sổ của bot, không đổi tên nhóm trên Zalo.",
+        parameters: {
+          type: "object",
+          properties: {
+            name: { type: "string", description: "Tên nhóm, đúng như quản trị viên nói." },
+            group_id: { type: "string", description: "ID nhóm lấy từ list_contacts (ví dụ zgr-...). Bỏ trống khi đang ở ngay trong nhóm cần đặt tên." },
+          },
+          required: ["name"],
+        },
+        audience: "admin",
+        run: async (args, { message }) => {
+          const ref = String(args.group_id ?? "").trim() || (message.isGroup ? `${message.channel}:${message.threadId}` : "");
+          if (!ref) throw new Error("Thiếu group_id: gọi list_contacts để lấy ID nhóm, hoặc hỏi lại quản trị viên là nhóm nào");
+          return this.nameGroup(ref, String(args.name ?? ""));
+        },
+      },
+    ];
   }
 
   /** Writes any pending changes now; for shutdown. */

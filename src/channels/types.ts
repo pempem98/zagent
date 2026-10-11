@@ -11,6 +11,8 @@ export interface Target {
 /** One incoming message, in the same shape whichever channel it came from. */
 export interface IncomingMessage extends Target {
   channel: ChannelId;
+  /** Name of the group the message was sent in, when the platform includes one. */
+  threadName?: string;
   messageId: string;
   senderId: string;
   senderName: string;
@@ -33,11 +35,29 @@ export interface ChannelCapabilities {
 
 export type MessageHandler = (message: IncomingMessage) => void | Promise<void>;
 
+/** A group the bot/account is in, as far as the platform tells. */
+export interface GroupSighting {
+  channel: ChannelId;
+  threadId: string;
+  /** Empty when the platform does not give one (the Bot Platform never does). */
+  name: string;
+  memberCount?: number;
+}
+
+/** What a channel learns about group membership without anyone writing in the group. */
+export type GroupUpdate =
+  | { type: "seen"; group: GroupSighting }
+  | { type: "left"; channel: ChannelId; threadId: string }
+  /** The complete list of groups on that channel: anything missing from it is no longer joined. */
+  | { type: "list"; channel: ChannelId; groups: GroupSighting[] };
+
+export type GroupHandler = (update: GroupUpdate) => void;
+
 export interface ZaloChannel {
   readonly id: ChannelId;
   readonly capabilities: ChannelCapabilities;
   /** Log in / connect and start delivering messages. Resolves once listening. */
-  start(onMessage: MessageHandler): Promise<void>;
+  start(onMessage: MessageHandler, onGroup?: GroupHandler): Promise<void>;
   stop(): Promise<void>;
   sendText(target: Target, text: string): Promise<void>;
   /** Best effort; never throws. */

@@ -1,16 +1,20 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import {
+  GroupEventType,
   LoginQRCallbackEventType,
   ThreadType,
   Zalo,
   type API,
   type Credentials,
+  type GroupEvent,
   type Message,
 } from "zca-js";
 import { chunkText, sleep } from "./text.js";
 import type {
   ChannelCapabilities,
+  GroupHandler,
+  GroupSighting,
   IncomingMessage,
   MessageHandler,
   MessageKind,
@@ -49,7 +53,7 @@ export class ZaloPersonalChannel implements ZaloChannel {
     this.sendDelayMs = options.sendDelayMs ?? [800, 2500];
   }
 
-  async start(onMessage: MessageHandler): Promise<void> {
+  async start(onMessage: MessageHandler, onGroup?: GroupHandler): Promise<void> {
     this.api = await this.login();
     this.ownId = this.api.getOwnId();
 
@@ -58,6 +62,11 @@ export class ZaloPersonalChannel implements ZaloChannel {
       const normalized = this.normalize(message);
       if (normalized) void Promise.resolve(onMessage(normalized)).catch((e) => console.error("[personal] handler error:", e));
     });
+    if (onGroup) {
+      // Every (re)connection: joins and removals that happened while offline are caught up here.
+      listener.on("connected", () => void this.listGroups().then((groups) => onGroup({ type: "list", channel: this.id, groups }), (error) => console.error("[personal] cannot list groups:", error)));
+      listener.on("group_event", (event) => this.onGroupEvent(event, onGroup));
+    }
     listener.on("error", (error) => console.error("[personal] listener error:", error));
     listener.on("closed", (code, reason) => console.error(`[personal] listener closed (${code}) ${reason}`));
     listener.start({ retryOnClose: true });
@@ -132,6 +141,41 @@ export class ZaloPersonalChannel implements ZaloChannel {
     await writeFile(this.sessionFile, JSON.stringify(credentials), { mode: 0o600 });
   }
 
+  /** Every group the account is in, with its name. */
+  private async listGroups(): Promise<GroupSighting[]> {
+    const api = this.requireApi();
+    const ids = Object.keys((await api.getAllGroups()).gridVerMap ?? {});
+    const groups: GroupSighting[] = [];
+    for (let i = 0; i < ids.length; i += GROUP_INFO_BATCH) {
+      const batch = ids.slice(i, i + GROUP_INFO_BATCH);
+      // Names are a nicety: a failed lookup must not make the groups themselves disappear.
+      const info = await api.getGroupInfo(batch).then(
+        (response) => response.gridInfoMap ?? {},
+        (error) => (console.error("[personal] cannot read group names:", error), {} as Record<string, { name?: string; totalMember?: number }>),
+      );
+      for (const id of batch) groups.push({ channel: this.id, threadId: id, name: info[id]?.name ?? "", memberCount: info[id]?.totalMember });
+    }
+    return groups;
+  }
+
+  private onGroupEvent(event: GroupEvent, onGroup: GroupHandler): void {
+    switch (event.type) {
+      case GroupEventType.JOIN:
+      case GroupEventType.LEAVE:
+      case GroupEventType.REMOVE_MEMBER:
+      case GroupEventType.BLOCK_MEMBER:
+        // These also fire for other members; only this account's own membership matters here.
+        if (!event.data.updateMembers?.some((member) => member.id === this.ownId)) return;
+        if (event.type === GroupEventType.JOIN) onGroup({ type: "seen", group: { channel: this.id, threadId: event.threadId, name: event.data.groupName ?? "" } });
+        else onGroup({ type: "left", channel: this.id, threadId: event.threadId });
+        return;
+      case GroupEventType.UPDATE:
+        // A rename, among other things.
+        if (event.data.groupName) onGroup({ type: "seen", group: { channel: this.id, threadId: event.threadId, name: event.data.groupName } });
+        return;
+    }
+  }
+
   private normalize(message: Message): IncomingMessage | null {
     if (message.isSelf) return null;
     const { data } = message;
@@ -159,6 +203,9 @@ export class ZaloPersonalChannel implements ZaloChannel {
     return this.api;
   }
 }
+
+/** Groups looked up per request when reading their names. */
+const GROUP_INFO_BATCH = 50;
 
 const KIND_BY_MSG_TYPE: Record<string, MessageKind> = {
   webchat: "text",

@@ -1,6 +1,7 @@
 import { chunkText, sleep } from "./text.js";
 import type {
   ChannelCapabilities,
+  GroupHandler,
   IncomingMessage,
   MessageHandler,
   MessageKind,
@@ -20,7 +21,8 @@ interface BotUpdate {
   event_name?: string;
   message?: {
     from?: { id?: string; display_name?: string; is_bot?: boolean };
-    chat?: { id?: string; chat_type?: string };
+    // Only id and chat_type are documented; the rest is kept in case the platform sends more.
+    chat?: { id?: string; chat_type?: string; [field: string]: unknown };
     text?: string;
     message_id?: string;
     date?: number;
@@ -44,6 +46,8 @@ export class ZaloBotChannel implements ZaloChannel {
   private abort?: AbortController;
   private polling?: Promise<void>;
   private readonly seen = new Set<string>();
+  private onGroup?: GroupHandler;
+  private readonly groupsLogged = new Set<string>();
 
   constructor(options: BotChannelOptions) {
     const baseUrl = options.baseUrl ?? "https://bot-api.zaloplatforms.com";
@@ -51,9 +55,10 @@ export class ZaloBotChannel implements ZaloChannel {
     this.pollTimeoutSec = options.pollTimeoutSec ?? 30;
   }
 
-  async start(onMessage: MessageHandler): Promise<void> {
+  async start(onMessage: MessageHandler, onGroup?: GroupHandler): Promise<void> {
     // Fails fast on a bad token instead of looping on errors.
     await this.call("getMe", {});
+    this.onGroup = onGroup;
     this.abort = new AbortController();
     this.polling = this.poll(onMessage, this.abort.signal);
   }
@@ -105,6 +110,14 @@ export class ZaloBotChannel implements ZaloChannel {
   private normalize(update: BotUpdate): IncomingMessage | null {
     const message = update.message;
     const threadId = message?.chat?.id;
+    // The docs list only message events and no way to ask which groups the bot is in. Anything
+    // else the platform sends (say, the bot being added to a group) is logged so it can be seen,
+    // and a group it names is remembered even though nobody has written there yet.
+    if (update.event_name && !update.event_name.startsWith("message.")) {
+      console.log(`[bot] update that is not a message: ${JSON.stringify(update).slice(0, 500)}`);
+      if (threadId && message?.chat?.chat_type === "GROUP") this.onGroup?.({ type: "seen", group: { channel: this.id, threadId, name: chatName(message.chat) ?? "" } });
+      return null;
+    }
     if (!message || !threadId || message.from?.is_bot) return null;
 
     // getUpdates has no offset, so guard against the same update arriving twice.
@@ -114,11 +127,18 @@ export class ZaloBotChannel implements ZaloChannel {
     if (this.seen.size > 1000) this.seen.delete(this.seen.values().next().value!);
 
     const kind = KIND_BY_EVENT[update.event_name ?? ""] ?? "other";
+    const isGroup = message.chat?.chat_type === "GROUP";
+    // Once per group and run: shows what the platform really says about a group, beyond the docs.
+    if (isGroup && !this.groupsLogged.has(threadId)) {
+      this.groupsLogged.add(threadId);
+      console.log(`[bot] group chat as sent by the platform: ${JSON.stringify(message.chat).slice(0, 500)}`);
+    }
 
     return {
       channel: this.id,
       threadId,
-      isGroup: message.chat?.chat_type === "GROUP",
+      isGroup,
+      threadName: isGroup ? chatName(message.chat) : undefined,
       messageId,
       senderId: message.from?.id ?? threadId,
       senderName: message.from?.display_name ?? "",
@@ -146,6 +166,15 @@ export class ZaloBotChannel implements ZaloChannel {
     }
     return payload.result;
   }
+}
+
+/** The documented chat object has no name; these are the fields one would arrive in if that changes. */
+function chatName(chat: Record<string, unknown> | undefined): string | undefined {
+  for (const field of ["title", "name", "display_name", "group_name", "chat_name"]) {
+    const value = chat?.[field];
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return undefined;
 }
 
 function errorText(error: unknown): string {

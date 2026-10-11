@@ -1,6 +1,6 @@
 import { ZaloBotChannel } from "./bot.js";
 import { ZaloPersonalChannel } from "./personal.js";
-import type { ChannelId, IncomingMessage, MessageHandler, Target, ZaloChannel } from "./types.js";
+import type { ChannelId, GroupHandler, IncomingMessage, MessageHandler, Target, ZaloChannel } from "./types.js";
 
 /** Runs any number of Zalo channels behind one message handler and one reply call. */
 export class ZaloHub {
@@ -16,8 +16,8 @@ export class ZaloHub {
   }
 
   /** Starts every channel; one failing to start does not stop the others. */
-  async start(onMessage: MessageHandler): Promise<void> {
-    const results = await Promise.allSettled([...this.channels.values()].map((channel) => channel.start(onMessage)));
+  async start(onMessage: MessageHandler, onGroup?: GroupHandler): Promise<void> {
+    const results = await Promise.allSettled([...this.channels.values()].map((channel) => channel.start(onMessage, onGroup)));
     const failed = results.flatMap((result, i) => (result.status === "rejected" ? [[this.ids[i], result.reason]] : []));
     for (const [id, reason] of failed) {
       console.error(`[${id}] failed to start:`, reason);

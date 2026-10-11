@@ -177,7 +177,16 @@ const scheduler = new Scheduler(data("tasks.json"), (task) =>
   }),
 );
 
-const contacts = new Contacts(data("contacts.json"));
+const contacts = new Contacts(data("contacts.json"), hub.ids);
+// The Bot Platform never tells a group's name, so the admins are asked for one as the group appears.
+contacts.onUnnamedGroup = (group, by) =>
+  notifyAdmins(
+    [
+      `Bot vừa ghi nhận một nhóm mới: ${group.channel}:${group.threadId}${by ? ` (người nhắn đầu tiên: ${by})` : ""}.`,
+      "Zalo không cho bot biết tên nhóm. Đặt tên để dễ nhận ra:",
+      `/namegroup ${group.threadId} <tên nhóm>`,
+    ].join("\n"),
+  );
 const messageLog = new MessageLog(data("messages"));
 const broadcaster = new Broadcaster(hub, contacts, scheduler, (recipient, text) => messageLog.outgoing(recipient, text));
 
@@ -205,6 +214,7 @@ const agent = new Agent({
     ...memory.tools(),
     ...scheduler.tools(),
     ...broadcaster.tools(),
+    ...contacts.tools(),
     ...desk.tools(),
     ...httpTools.tools(),
     ...mcp.tools(),
@@ -239,6 +249,7 @@ const ADMIN_HELP = `
 /procedures - xem các quy trình đã dạy cho bot
 /tickets - các câu hỏi đang chờ bạn trả lời
 /users, /groups - danh sách người dùng và nhóm bot đã gặp
+/namegroup <ID nhóm> <tên> - đặt tên cho một nhóm (Zalo không cho bot biết tên nhóm)
 /broadcast [users|groups|all] <nội dung> - soạn thông báo gửi hàng loạt (mặc định: users)
 /confirm <mã>, /cancel <mã> - gửi hoặc huỷ một bản nháp thông báo
 /keys - xem model đang dùng và khoá API nào đang bị chặn vì hết hạn mức
@@ -268,6 +279,9 @@ async function handleCommand(message: IncomingMessage, isAdmin: boolean): Promis
   if (text === "/reload") return reloadAll();
   if (text === "/users") return contacts.describeUsers();
   if (text === "/groups") return contacts.describeGroups();
+  const naming = /^\/namegroup\s+(\S+)\s+([\s\S]+)$/.exec(text);
+  if (naming) return contacts.nameGroup(naming[1]!, naming[2]!);
+  if (text.startsWith("/namegroup")) return "Cách dùng: /namegroup <ID nhóm> <tên nhóm>. Nhắn /groups để xem ID.";
   const broadcast = /^\/broadcast(?:\s+(users|groups|all))?\s+([\s\S]+)$/.exec(text);
   if (broadcast) {
     try {
@@ -370,7 +384,11 @@ async function handle(message: IncomingMessage): Promise<void> {
   }
 }
 
-await hub.start((message) => enqueue(conversationKey(message), () => handle(message)));
+await hub.start(
+  (message) => enqueue(conversationKey(message), () => handle(message)),
+  // Groups are remembered as soon as the channel learns of them, not only once someone writes there.
+  (update) => contacts.recordGroup(update),
+);
 await scheduler.start();
 
 console.log(`Zalo hub running on: ${hub.ids.join(", ")} | models: ${models.labels.join(" > ")} | admins: ${config.admins.length}`);
