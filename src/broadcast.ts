@@ -3,15 +3,14 @@ import type { ZaloHub } from "./channels/hub.js";
 import { sleep } from "./channels/text.js";
 import type { IncomingMessage } from "./channels/types.js";
 import type { BroadcastAudience, Contacts } from "./contacts.js";
-import { describeRepeat, formatTime, parseSchedule, type Repeat, type Scheduler } from "./tools/scheduler.js";
+import { describeRepeat, formatTime, parseSchedule, type Schedule, type Scheduler } from "./tools/scheduler.js";
 
 interface Draft {
   code: string;
   text: string;
   audience: BroadcastAudience;
   /** Set for a scheduled broadcast; absent means "send as soon as it is confirmed". */
-  at?: number;
-  repeat: Repeat;
+  schedule?: Schedule;
   author: IncomingMessage;
   expiresAt: number;
 }
@@ -46,7 +45,7 @@ export class Broadcaster {
   ) {}
 
   /** Creates a draft and returns the preview to show the admin. */
-  draft(author: IncomingMessage, text: string, audience: BroadcastAudience, schedule?: { at: number; repeat: Repeat }): string {
+  draft(author: IncomingMessage, text: string, audience: BroadcastAudience, schedule?: Schedule): string {
     const body = text.trim();
     if (!body) throw new Error("Thiếu nội dung thông báo");
     if (body.length > MAX_TEXT_CHARS) throw new Error(`Thông báo dài quá ${MAX_TEXT_CHARS} ký tự`);
@@ -55,9 +54,9 @@ export class Broadcaster {
 
     for (const [code, draft] of this.drafts) if (draft.expiresAt < Date.now()) this.drafts.delete(code);
     const code = String(Math.floor(1000 + Math.random() * 9000));
-    this.drafts.set(code, { code, text: body, audience, at: schedule?.at, repeat: schedule?.repeat ?? "none", author, expiresAt: Date.now() + DRAFT_TTL_MS });
+    this.drafts.set(code, { code, text: body, audience, schedule, author, expiresAt: Date.now() + DRAFT_TTL_MS });
 
-    const when = schedule ? `lúc ${formatTime(schedule.at)}${describeRepeat(schedule.repeat)}` : "ngay khi xác nhận";
+    const when = schedule ? `lúc ${formatTime(schedule.at)}${describeRepeat(schedule)}` : "ngay khi xác nhận";
     return [
       `Bản nháp thông báo #${code}`,
       `Gửi tới: ${reach} nơi (${AUDIENCE_LABEL[audience]})`,
@@ -75,10 +74,12 @@ export class Broadcaster {
     if (!draft || draft.expiresAt < Date.now()) return `Không có bản nháp #${code} (có thể đã hết hạn).`;
     this.drafts.delete(code);
 
-    if (draft.at) {
-      if (draft.at < Date.now() + 30_000) return "Thời điểm đã hẹn qua mất rồi; hãy tạo lại thông báo.";
-      const task = await this.scheduler.addJob(admin, draft.at, draft.repeat, { type: "broadcast", text: draft.text, audience: draft.audience }, `Gửi thông báo tới ${AUDIENCE_LABEL[draft.audience]}: ${draft.text.slice(0, 80)}`);
-      return `Đã đặt lịch gửi thông báo (mã ${task.id}) lúc ${formatTime(draft.at)}${describeRepeat(draft.repeat)}. Muốn huỷ thì bảo mình huỷ lịch ${task.id}.`;
+    if (draft.schedule) {
+      // A cron schedule starts at its next run from now, not from when the draft was written.
+      const schedule = draft.schedule.cron ? parseSchedule({ cron: draft.schedule.cron }) : draft.schedule;
+      if (!schedule.cron && schedule.at < Date.now() + 30_000) return "Thời điểm đã hẹn qua mất rồi; hãy tạo lại thông báo.";
+      const task = await this.scheduler.addJob(admin, schedule, { type: "broadcast", text: draft.text, audience: draft.audience }, `Gửi thông báo tới ${AUDIENCE_LABEL[draft.audience]}: ${draft.text.slice(0, 80)}`);
+      return `Đã đặt lịch gửi thông báo (mã ${task.id}) lúc ${formatTime(schedule.at)}${describeRepeat(schedule)}. Muốn huỷ thì bảo mình huỷ lịch ${task.id}.`;
     }
     if (this.sending) return "Đang có một đợt gửi khác chạy dở; thử lại sau ít phút.";
 
@@ -121,7 +122,7 @@ export class Broadcaster {
       {
         name: "draft_broadcast",
         description:
-          "Soạn bản nháp một thông báo gửi hàng loạt tới người dùng và/hoặc các nhóm, gửi ngay hoặc hẹn giờ (một lần, hằng ngày, hằng tuần). Công cụ này KHÔNG gửi gì: nó trả về bản xem trước kèm mã, và chỉ khi quản trị viên tự nhắn lệnh /confirm <mã> thì thông báo mới được gửi hoặc đặt lịch. Sau khi gọi, chuyển nguyên văn bản xem trước cho quản trị viên. Chỉ dùng khi quản trị viên yêu cầu gửi thông báo cho mọi người.",
+          "Soạn bản nháp một thông báo gửi hàng loạt tới người dùng và/hoặc các nhóm, gửi ngay hoặc hẹn giờ (một lần, hằng ngày, hằng tuần, hoặc theo lịch cron). Công cụ này KHÔNG gửi gì: nó trả về bản xem trước kèm mã, và chỉ khi quản trị viên tự nhắn lệnh /confirm <mã> thì thông báo mới được gửi hoặc đặt lịch. Sau khi gọi, chuyển nguyên văn bản xem trước cho quản trị viên. Chỉ dùng khi quản trị viên yêu cầu gửi thông báo cho mọi người.",
         parameters: {
           type: "object",
           properties: {
@@ -129,6 +130,7 @@ export class Broadcaster {
             audience: { type: "string", enum: ["users", "groups", "all"], description: "users: người đã nhắn riêng cho bot (mặc định); groups: các nhóm; all: cả hai." },
             time: { type: "string", description: "Bỏ trống để gửi ngay khi xác nhận. Hẹn giờ thì dùng ISO 8601 có múi giờ, ví dụ 2026-10-12T08:00:00+07:00." },
             repeat: { type: "string", enum: ["none", "daily", "weekly"], description: "Lặp lại; chỉ có nghĩa khi có time. Mặc định none." },
+            cron: { type: "string", description: 'Lịch lặp kiểu crontab thay cho time và repeat: 5 trường "phút giờ ngày tháng thứ" theo giờ Việt Nam, ví dụ "0 8 * * 1-5" = 8h sáng từ thứ Hai đến thứ Sáu.' },
           },
           required: ["message"],
         },
@@ -136,7 +138,7 @@ export class Broadcaster {
         run: async (args, { message, scheduled }) => {
           if (scheduled) throw new Error("Không thể soạn thông báo hàng loạt từ bên trong một tác vụ hẹn giờ");
           const audience: BroadcastAudience = args.audience === "groups" || args.audience === "all" ? args.audience : "users";
-          const schedule = args.time ? parseSchedule(args.time, args.repeat) : undefined;
+          const schedule = args.time || args.cron ? parseSchedule(args) : undefined;
           return this.draft(message, String(args.message ?? ""), audience, schedule);
         },
       },

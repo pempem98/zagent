@@ -277,6 +277,19 @@ Tất cả còn nguyên sau khi khởi động lại. Ai cũng có thể nhắn 
 
 Bot có thể tự làm việc vào lúc khác mà không cần ai nhắn: nhắc lịch ("nhắc tôi 9h mai gọi chủ nhà"), hỏi thăm lại khách, gửi thông tin hằng ngày hoặc hằng tuần. Đến giờ, bot được gọi lại với nội dung công việc, có thể tra cứu rồi tự soạn và gửi tin. Mỗi cuộc trò chuyện có tối đa 10 lịch hẹn.
 
+Tin được gửi vào chính cuộc trò chuyện đã đặt lịch. Riêng admin có thể hẹn từ chat riêng cho tin gửi vào một nhóm bot đang ở ("9h mai gửi giá vàng vào nhóm Demo Zagent"); lịch đó vẫn xem và huỷ được từ chat riêng của admin.
+
+Một lịch chạy một lần, lặp hằng ngày, hằng tuần, hoặc theo biểu thức kiểu crontab khi cần chi tiết hơn. Cứ nói bằng lời ("mỗi giờ từ 8h đến 20h gửi giá vàng vào nhóm"), bot tự viết biểu thức; muốn chắc thì đưa thẳng biểu thức cho bot. Cron gồm 5 trường `phút giờ ngày tháng thứ`, tính theo giờ Việt Nam:
+
+| Biểu thức | Nghĩa |
+|---|---|
+| `0 8-20 * * *` | Đầu mỗi giờ, từ 8h đến 20h, hằng ngày |
+| `*/30 9-17 * * 1-5` | Mỗi 30 phút trong khung 9h-17h, thứ Hai đến thứ Sáu |
+| `0 9 1 * *` | 9h sáng ngày 1 hằng tháng |
+| `15,45 7 * * 0` | 7h15 và 7h45 mỗi Chủ nhật |
+
+Mỗi trường nhận số, danh sách (`1,15`), khoảng (`8-20`) và bước (`*/30`); thứ là 0-7, trong đó 0 và 7 đều là Chủ nhật; không nhận tên tháng, tên thứ (`MON`, `JAN`). Các lần chạy phải cách nhau ít nhất 5 phút, vì mỗi lần là một lượt gọi model. Lịch cron chạy mãi cho tới khi bị huỷ.
+
 ## Người dùng, nhóm và nhật ký tin nhắn
 
 Bot ghi lại mọi người và mọi nhóm nó gặp, cùng toàn bộ tin nhắn, mà không gọi model nên không tốn token:
@@ -324,14 +337,14 @@ Cũng có thể nói bằng lời thường ("gửi cho mọi người thông b�
 
 ### Lịch làm việc tự động
 
-Ngoài việc nhắc lịch cho từng người, admin có thể hẹn giờ cho hai việc hệ thống, một lần hoặc lặp lại hằng ngày, hằng tuần. Cả hai chạy trực tiếp, không gọi model, và báo kết quả vào chat của admin đã đặt lịch:
+Ngoài việc nhắc lịch cho từng người, admin có thể hẹn giờ cho hai việc hệ thống, một lần, lặp lại hằng ngày, hằng tuần, hoặc theo cron như trên. Cả hai chạy trực tiếp, không gọi model, và báo kết quả vào chat của admin đã đặt lịch:
 
 | Việc | Cách đặt | Ghi chú |
 |---|---|---|
 | Nạp lại tài liệu và cấu hình | Nói với bot, ví dụ "6h sáng mỗi ngày tự reload nhé" | Giống lệnh `/reload` |
 | Gửi thông báo hàng loạt | "9h sáng mai gửi cho mọi người: ..." rồi `/confirm <mã>` | Lịch chỉ được tạo sau khi xác nhận |
 
-Xem và huỷ lịch bằng cách bảo bot ("liệt kê các lịch hẹn", "huỷ lịch 3"). Lịch được lưu ở `data/tasks.json` nên vẫn còn sau khi khởi động lại; lịch được kiểm tra mỗi 20 giây.
+Xem và huỷ lịch bằng cách bảo bot ("liệt kê các lịch hẹn", "huỷ lịch 3"), hoặc bằng lệnh `/tasks` và `/deltask <mã>`. Lịch được lưu ở `data/tasks.json` nên vẫn còn sau khi khởi động lại; lịch được kiểm tra mỗi 20 giây.
 
 ## Quản trị viên
 
@@ -357,6 +370,10 @@ Lệnh trong khung chat:
 | `/id` | Mọi người | Xem ID của mình và của hội thoại |
 | `/forget` | Mọi người | Xoá lịch sử trò chuyện và ghi nhớ về mình |
 | `/stop`, `/start` | Mọi người | Tắt, bật nhận thông báo chung |
+| `/tasks` | Mọi người | Xem các lịch hẹn của cuộc trò chuyện |
+| `/task <lịch> \| <việc>` | Mọi người | Tạo lịch hẹn; `<lịch>` là giờ (`15:30`, `9:00 12/10`, `2026-10-12 09:00`) hoặc cron (`0 8-20 * * *`) |
+| `/task <lịch> \| <nhóm> \| <việc>` | Admin | Tạo lịch hẹn mà tin gửi vào một nhóm, theo tên hoặc ID nhóm |
+| `/deltask <mã>` | Mọi người | Huỷ một lịch hẹn |
 | `/users`, `/groups` | Admin | Danh sách người dùng và nhóm bot đã gặp |
 | `/namegroup <ID nhóm> <tên>` | Admin | Đặt tên cho một nhóm trong sổ của bot |
 | `/broadcast [users\|groups\|all] <nội dung>` | Admin | Soạn bản nháp thông báo hàng loạt |

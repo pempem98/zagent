@@ -21,7 +21,7 @@ import { HttpTools } from "./tools/http-tools.js";
 import { KnowledgeBase } from "./tools/knowledge.js";
 import { McpHub } from "./tools/mcp.js";
 import { Procedures } from "./tools/procedures.js";
-import { Scheduler } from "./tools/scheduler.js";
+import { parseTaskCommand, Scheduler, TASK_USAGE } from "./tools/scheduler.js";
 import { webTools } from "./tools/web.js";
 
 try {
@@ -175,6 +175,7 @@ const scheduler = new Scheduler(data("tasks.json"), (task) =>
     const text = await agent.reply(message, { isAdmin: desk.isAdmin(message), scheduled: true });
     await say(task.channel, task, text);
   }),
+  (ref) => contacts.findGroup(ref),
 );
 
 const contacts = new Contacts(data("contacts.json"), hub.ids);
@@ -241,10 +242,15 @@ await Promise.all([embedder?.load(), contacts.load(), instructions.load(), httpT
 await knowledge.start(config.knowledgeRefreshMinutes);
 
 const HELP = `Lệnh có thể dùng:
+/help - xem danh sách lệnh này
 /id - xem ID của bạn
 /forget - xoá lịch sử trò chuyện và mọi ghi nhớ về bạn
-/stop - ngừng nhận thông báo chung từ bot (/start để nhận lại)`;
+/stop - ngừng nhận thông báo chung từ bot (/start để nhận lại)
+/tasks - xem các lịch hẹn của cuộc trò chuyện này
+/task <lịch> | <việc cần làm> - tạo lịch hẹn; <lịch> là giờ (15:30, 9:00 12/10) hoặc cron (0 8-20 * * *). Nhắn /task để xem cách dùng
+/deltask <mã> - huỷ một lịch hẹn`;
 const ADMIN_HELP = `
+/task <lịch> | <tên hoặc ID nhóm> | <việc cần làm> - tạo lịch hẹn gửi tin vào một nhóm
 /reload - nạp lại tài liệu, quy trình, công cụ tự khai báo và hướng dẫn hệ thống
 /procedures - xem các quy trình đã dạy cho bot
 /tickets - các câu hỏi đang chờ bạn trả lời
@@ -274,6 +280,22 @@ async function handleCommand(message: IncomingMessage, isAdmin: boolean): Promis
     contacts.setSubscribed(message, text === "/start");
     return text === "/stop" ? "Đã tắt nhận thông báo chung. Bạn vẫn hỏi đáp với mình bình thường; nhắn /start để nhận lại." : "Đã bật lại nhận thông báo chung.";
   }
+  if (text === "/tasks") return scheduler.describe(message);
+  const taskBody = /^\/task(?:\s+([\s\S]*))?$/.exec(text);
+  const taskRemoval = /^\/deltask\s+#?(\d+)$/.exec(text);
+  if (taskBody || taskRemoval) {
+    if (taskBody && !taskBody[1]) return TASK_USAGE;
+    let outcome: string;
+    try {
+      outcome = taskRemoval ? await scheduler.cancel(message, Number(taskRemoval[1])) : await scheduler.create(message, isAdmin, parseTaskCommand(taskBody![1]!));
+    } catch (error) {
+      return taskRemoval ? (error as Error).message : `${(error as Error).message}\n\n${TASK_USAGE}`;
+    }
+    // Commands bypass the model; note the outcome in its history so it knows the schedule changed.
+    conversations.append(conversationKey(message), text, outcome);
+    return outcome;
+  }
+  if (text.startsWith("/deltask")) return "Cách dùng: /deltask <mã>. Nhắn /tasks để xem mã.";
   // Admin commands list people and trigger mass messages: private chat only, never in a group.
   if (!isAdmin || message.isGroup) return null;
   if (text === "/reload") return reloadAll();

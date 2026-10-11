@@ -139,12 +139,23 @@ export class Contacts {
   }
 
   /**
+   * Finds a group by its thread id, with or without the channel prefix, or by its name when
+   * exactly one group carries it.
+   */
+  findGroup(ref: string, { byName = true } = {}): GroupRecord | undefined {
+    const wanted = ref.trim();
+    const byId = this.file.data.groups[wanted] ?? this.groups.find((candidate) => candidate.threadId === wanted);
+    if (byId || !byName || !wanted) return byId;
+    const named = this.groups.filter((candidate) => candidate.name?.toLowerCase() === wanted.toLowerCase());
+    return named.length === 1 ? named[0] : undefined;
+  }
+
+  /**
    * Gives a group the name an admin chose, for platforms that tell none. `ref` is the thread id,
    * with or without its channel prefix. Returns the text to answer with.
    */
   nameGroup(ref: string, name: string): string {
-    const { groups } = this.file.data;
-    const group = groups[ref.trim()] ?? this.groups.find((candidate) => candidate.threadId === ref.trim());
+    const group = this.findGroup(ref, { byName: false });
     if (!group) return `Không có nhóm nào mang ID "${ref.trim()}". Nhắn /groups để xem ID các nhóm.`;
     const label = name.replace(/\s+/g, " ").trim().slice(0, MAX_GROUP_NAME_CHARS);
     if (!label) return "Thiếu tên nhóm.";
