@@ -140,6 +140,7 @@ Nếu đã bật Google Drive (xem mục "Google Drive"), bạn có thể soạn
 
 - Thay đổi có hiệu lực ở lần đồng bộ kế tiếp (10 phút một lần), hoặc ngay khi admin nhắn `/reload`.
 - Quy trình trên Drive trùng tên với quy trình trong máy thì bản trên Drive được dùng. Quy trình từ Drive không sửa hay xoá được từ khung chat; phải sửa trên Drive.
+- Thư mục `_template` (hoặc `template`, `templates`) là chỗ để file mẫu cho người soạn: bot bỏ qua hoàn toàn.
 - Thư mục `listings` trên Drive là bảng hàng cho MCP server (xem "MCP: bảng hàng bất động sản"). Mọi thứ còn lại trên Drive, kể cả file để lẻ ở gốc và các thư mục tên khác, đều là tài liệu để tra cứu.
 - **Ai sửa được thư mục Drive này thì điều khiển được bot**: họ có thể đổi hướng dẫn hệ thống và mọi quy trình. Chỉ cấp quyền chỉnh sửa cho người bạn tin như admin.
 - Công cụ (`tools.json`, `mcp.json`) không đồng bộ từ Drive, vì chúng cho bot quyền gọi ra hệ thống khác; chúng chỉ được đặt trên máy chạy bot.
@@ -268,7 +269,7 @@ Lưu ý:
 | Loại | Lưu ở | Cách hoạt động |
 |---|---|---|
 | Lịch sử trò chuyện | `data/conversations.json` | Giữ nguyên văn các tin gần nhất; phần cũ hơn được gộp thành bản tóm tắt thay vì bị quên. Cuộc trò chuyện im lặng quá 90 ngày thì bị xoá. |
-| Ghi nhớ về từng người | `data/memories.json` | Bot tự ghi lại điều đáng nhớ (tên, nhu cầu, ngân sách...), tối đa 30 ý mỗi người. Không dùng trong nhóm chat. |
+| Ghi nhớ về từng người | `data/memories.json` | Bot tự ghi lại điều đáng nhớ (tên, nhu cầu, ngân sách...), tối đa 30 ý mỗi người. Không dùng trong nhóm chat, trừ khi người hỏi là admin. |
 | Lịch hẹn | `data/tasks.json` | Xem mục "Chủ động" bên dưới. |
 
 Tất cả còn nguyên sau khi khởi động lại. Ai cũng có thể nhắn `/forget` để xoá lịch sử và ghi nhớ về mình.
@@ -299,7 +300,7 @@ Bot ghi lại mọi người và mọi nhóm nó gặp, cùng toàn bộ tin nh�
 | Người dùng và nhóm | `data/contacts.json` | Tên, ID, lần đầu và lần cuối gặp, số tin, đã nhắn riêng cho bot chưa, có nhận thông báo không; với nhóm: tên và số thành viên (nếu kênh cho biết), những ai đã nhắn |
 | Mọi tin nhắn đến và đi | `data/messages/<ngày>/<kênh>-<hội thoại>.jsonl` | Mỗi dòng một tin: thời điểm, người gửi, loại, nội dung. Kể cả tin trong nhóm mà bot không trả lời, và tin không phải chữ |
 
-Admin nhắn `/users` hoặc `/groups` (trong chat riêng với bot) để xem danh sách. Hỏi bằng lời thường cũng được ("bot đang ở nhóm nào?"): bot tra dữ liệu thật bằng công cụ `list_contacts` rồi mới trả lời.
+Admin nhắn `/users` hoặc `/groups` để xem danh sách. Hỏi bằng lời thường cũng được ("bot đang ở nhóm nào?"): bot tra dữ liệu thật bằng công cụ `list_contacts` rồi mới trả lời.
 
 Bot biết một nhóm từ khi nào thì tuỳ kênh:
 
@@ -312,9 +313,21 @@ Bot biết một nhóm từ khi nào thì tuỳ kênh:
 - Trên kênh `personal`, "dành cho bot" nghĩa là có @mention bot. Trên kênh `bot`, nền tảng Zalo quyết định chuyển tin nào cho bot (theo tài liệu là các tin @mention bot); tin nào được chuyển tới thì bot coi là dành cho nó.
 - Mỗi nhóm có trần số lần trả lời mỗi giờ: `GROUP_REPLIES_PER_HOUR`, mặc định 30. Vượt trần thì bot chỉ ghi nhật ký. Đặt `0` để bot chỉ lắng nghe trong nhóm, không bao giờ trả lời.
 - Khi được hỏi trong nhóm, bot được xem 15 tin gần nhất của nhóm đó để hiểu mọi người đang nói về gì. Số tin này lấy từ bộ nhớ đang chạy, nên ngay sau khi khởi động lại bot chưa có ngữ cảnh nhóm.
-- Lệnh của admin không chạy trong nhóm, để danh sách người dùng không bị lộ ra đó.
+- Admin hỏi trong nhóm thì bot trả lời đầy đủ như trong chat riêng, kể cả lệnh admin và thông tin nội bộ (danh sách người dùng, nhóm, lịch hẹn, ghi nhớ). **Mọi thành viên trong nhóm đều đọc được câu trả lời**, nên chỉ hỏi những thứ nhạy cảm trong nhóm toàn người tin cậy. Người không phải admin thì vẫn bị giới hạn như cũ.
 
 Nhật ký tin nhắn chứa nội dung trò chuyện của khách: hãy bảo vệ thư mục `data/`. Nhật ký cũ hơn 30 ngày tự bị xoá (xem "Log và thời hạn lưu").
+
+### Chống lạm dụng và theo dõi sử dụng
+
+- **Giới hạn mỗi người**: mỗi người được bot trả lời (có gọi model) tối đa `USER_REPLIES_PER_HOUR` lần mỗi giờ, mặc định 20, tính gộp chat riêng và nhóm. Vượt mức thì bot chỉ ghi nhật ký; trong chat riêng bot báo một lần là đang tạm nghỉ. Admin không bị giới hạn. Đặt `0` để bỏ giới hạn.
+- **Chặn**: `/ban <ID> [lý do]`. Người bị chặn vẫn được ghi nhật ký nhưng bot không trả lời, nên không tốn token. `/unban <ID>` để bỏ chặn, `/bans` để xem danh sách. Không chặn được admin.
+- **Ai dùng nhiều**: `/top [số ngày]` (mặc định 7, tối đa 30) liệt kê người nhắn nhiều nhất: số tin, số nhóm đã nhắn, số lượt AI đã dùng, lần nhắn gần nhất, có đang bị chặn không. Số lượt AI được đếm từ khi có tính năng này, giữ 90 ngày.
+- **Xem tin nhắn**: `/history <ID> [số tin]` hiện tối đa 100 tin gần nhất trong 7 ngày của một người (chat riêng và những gì họ nói trong nhóm) hoặc của một nhóm.
+- **Rà soát bằng AI**: `/review [ID] [số ngày]` (bỏ trống ID để rà soát tất cả; mặc định hôm nay, tối đa 7 ngày). Bot gửi nhật ký cho model, chỉ để đọc và không kèm công cụ nào, và nhận lại danh sách người có dấu hiệu bất thường: lừa bot, link lạ, spam, mạo danh, hỏi dò thông tin người khác. Mỗi người kèm mức độ, bằng chứng và đề xuất. Mỗi lần rà soát tốn một lượt model, nhật ký quá dài thì chỉ lấy phần gần nhất. Kết quả chỉ là gợi ý: bot không tự chặn ai.
+- Hỏi bằng lời cũng được: "ai dùng bot nhiều nhất tuần này?", "xem Lan nhắn gì", "kiểm tra nhóm Demo hôm qua có gì bất thường không", "chặn bot:abc... vì spam". Muốn có báo cáo hằng ngày thì hẹn lịch: "8h sáng mỗi ngày rà soát tin nhắn hôm qua và báo cho tôi".
+- Dữ liệu chặn và thống kê nằm ở `data/moderation.json`.
+
+Đọc và phân tích tin nhắn của khách là xử lý dữ liệu cá nhân. Nên báo cho khách biết tin nhắn được lưu và rà soát để chống lạm dụng, ví dụ trong lời chào hoặc chính sách của bạn.
 
 ### Gửi thông báo hàng loạt
 
@@ -376,6 +389,11 @@ Lệnh trong khung chat:
 | `/deltask <mã>` | Mọi người | Huỷ một lịch hẹn |
 | `/users`, `/groups` | Admin | Danh sách người dùng và nhóm bot đã gặp |
 | `/namegroup <ID nhóm> <tên>` | Admin | Đặt tên cho một nhóm trong sổ của bot |
+| `/deluser <ID>`, `/delgroup <ID nhóm>` | Admin | Xoá người dùng hoặc nhóm khỏi sổ của bot (nhiều ID cách nhau bằng dấu cách). Họ nhắn lại thì được ghi nhận lại. Hỏi bằng lời cũng được: "xoá nhóm zgr-... khỏi danh sách" |
+| `/top [số ngày]` | Admin | Ai nhắn nhiều, tốn nhiều lượt AI nhất |
+| `/history <ID> [số tin]` | Admin | Xem tin gần nhất của một người hoặc một nhóm |
+| `/review [ID] [số ngày]` | Admin | AI rà soát tin nhắn tìm hành vi bất thường |
+| `/ban <ID> [lý do]`, `/unban <ID>`, `/bans` | Admin | Chặn, bỏ chặn, xem người bị chặn |
 | `/broadcast [users\|groups\|all] <nội dung>` | Admin | Soạn bản nháp thông báo hàng loạt |
 | `/confirm <mã>`, `/cancel <mã>` | Admin | Gửi hoặc huỷ một bản nháp thông báo |
 | `/reload` | Admin | Nạp lại kho tài liệu |
@@ -392,6 +410,8 @@ Lệnh trong khung chat:
 | `search_knowledge` | Mọi người | Tìm đoạn liên quan trong kho tài liệu |
 | `read_document` | Mọi người | Đọc nguyên văn một phần tài liệu |
 | `add_knowledge_note` | Admin | Thêm kiến thức mới vào kho tài liệu |
+| `usage_stats`, `read_messages`, `review_messages`, `ban_user` | Admin | Thống kê sử dụng, xem tin nhắn, rà soát bất thường, chặn người dùng |
+| `remove_contact` | Admin | Xoá người dùng hoặc nhóm khỏi sổ của bot |
 | `save_procedure`, `delete_procedure` | Admin | Dạy, sửa và xoá quy trình xử lý |
 | `web_search` | Mọi người (`WEB_AUDIENCE=admin` để chỉ admin dùng, `off` để tắt) | Tìm kiếm web. Dùng Google Search qua Gemini nếu khoá Gemini đã bật thanh toán; nếu không thì dùng DuckDuckGo, không cần khoá |
 | `fetch_url` | Như trên | Đọc một trang web công khai; chặn địa chỉ nội bộ |

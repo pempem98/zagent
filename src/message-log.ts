@@ -1,4 +1,4 @@
-import { appendFile, mkdir } from "node:fs/promises";
+import { appendFile, mkdir, readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { IncomingMessage, Target } from "./channels/types.js";
 import { logDay } from "./retention.js";
@@ -10,6 +10,11 @@ export interface LoggedMessage {
   senderName: string;
   kind: string;
   text: string;
+}
+
+export interface ThreadMessage extends LoggedMessage {
+  /** `channel:threadId` of the conversation the message belongs to. */
+  thread: string;
 }
 
 const RECENT_PER_THREAD = 30;
@@ -38,6 +43,35 @@ export class MessageLog {
   /** The latest messages of a thread, oldest first. Empty right after a restart. */
   recent(target: { channel: string; threadId: string }, limit: number): LoggedMessage[] {
     return (this.recentByThread.get(key(target)) ?? []).slice(-limit);
+  }
+
+  /**
+   * Every message on disk from the last `days` days (today counts as one), oldest first. `thread`
+   * is `channel:threadId`. For admin reports; reads whole files, so keep `days` small.
+   */
+  async read(days: number, now = Date.now()): Promise<ThreadMessage[]> {
+    await this.writing;
+    const wanted = new Set(Array.from({ length: Math.max(1, days) }, (_, index) => logDay(now - index * 86_400_000)));
+    const found: ThreadMessage[] = [];
+    for (const day of await readdir(this.dir).catch(() => [] as string[])) {
+      if (!wanted.has(day)) continue;
+      for (const file of await readdir(join(this.dir, day)).catch(() => [] as string[])) {
+        if (!file.endsWith(".jsonl")) continue;
+        // `<channel>-<thread>.jsonl`; channel names hold no dash, thread ids may.
+        const name = file.slice(0, -".jsonl".length);
+        const thread = `${name.slice(0, name.indexOf("-"))}:${name.slice(name.indexOf("-") + 1)}`;
+        const text = await readFile(join(this.dir, day, file), "utf8").catch(() => "");
+        for (const line of text.split("\n")) {
+          if (!line.trim()) continue;
+          try {
+            found.push({ ...(JSON.parse(line) as LoggedMessage), thread });
+          } catch {
+            // A line cut short by a crash; skip it.
+          }
+        }
+      }
+    }
+    return found.sort((a, b) => a.at - b.at);
   }
 
   /** Resolves once everything logged so far is on disk; for shutdown and tests. */

@@ -48,6 +48,8 @@ export interface Config {
   logRetentionDays: number;
   /** Most model-backed replies the bot gives in one group per hour; 0 means it only listens there. */
   groupRepliesPerHour: number;
+  /** Most model-backed replies one person gets per hour, across all chats; 0 means no limit. Admins are exempt. */
+  userRepliesPerHour: number;
   /** Who may trigger web search and page fetching; "off" removes both tools. */
   webAudience: Audience | "off";
 }
@@ -67,6 +69,8 @@ export const DRIVE_ALIASES = {
   systemPrompt: [LAYOUT.systemPrompt, "_system-prompt"],
   procedures: [LAYOUT.procedures, "_quy-trinh", "quy-trinh"],
   listings: [LAYOUT.listings, "_bang-hang", "bang-hang"],
+  /** Templates for the people editing Drive; never read by the bot. */
+  templates: ["templates", "_template", "template"],
 } as const;
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
@@ -95,6 +99,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     mcpConfigFile: env.MCP_CONFIG || "mcp.json",
     logRetentionDays: env.LOG_RETENTION_DAYS?.trim() ? Math.max(0, Number(env.LOG_RETENTION_DAYS) || 0) : 30,
     groupRepliesPerHour: env.GROUP_REPLIES_PER_HOUR?.trim() ? Math.max(0, Number(env.GROUP_REPLIES_PER_HOUR) || 0) : 30,
+    userRepliesPerHour: env.USER_REPLIES_PER_HOUR?.trim() ? Math.max(0, Number(env.USER_REPLIES_PER_HOUR) || 0) : 20,
     webAudience: env.WEB_AUDIENCE === "admin" ? "admin" : /^(off|none|0|false)$/i.test(env.WEB_AUDIENCE ?? "") ? "off" : "all",
   };
 }
