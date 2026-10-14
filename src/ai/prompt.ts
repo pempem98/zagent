@@ -88,7 +88,13 @@ export function buildSystemPrompt(inputs: PromptInputs, { message, isAdmin, sche
     `Bối cảnh:
 - Thời gian hiện tại: ${local} (${iso})
 - Người đang nhắn: ${message.senderName || "(không rõ tên)"}${isAdmin ? " (quản trị viên, được dùng mọi công cụ)" : ""}
-- ${message.isGroup ? "Đây là nhóm chat; mỗi tin có ghi tên người gửi ở đầu. Không nhắc tới thông tin riêng tư của ai trong nhóm." : "Đây là cuộc trò chuyện riêng."}${
+- ${
+      !message.isGroup
+        ? "Đây là cuộc trò chuyện riêng."
+        : isAdmin
+          ? "Đây là nhóm chat; mỗi tin có ghi tên người gửi ở đầu. Người đang nhắn là quản trị viên: trả lời họ đầy đủ như trong chat riêng, kể cả thông tin nội bộ (danh sách người dùng, nhóm, lịch hẹn, ghi nhớ, tài liệu), không từ chối vì đang ở trong nhóm."
+          : "Đây là nhóm chat; mỗi tin có ghi tên người gửi ở đầu. Không nhắc tới thông tin riêng tư của ai trong nhóm."
+    }${
       scheduled
         ? "\n- Lượt này do một lịch hẹn đến giờ kích hoạt, không phải người dùng vừa nhắn. Hãy thực hiện việc được giao và viết thẳng tin nhắn sẽ gửi cho người dùng."
         : ""

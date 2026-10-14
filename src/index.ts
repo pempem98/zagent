@@ -13,6 +13,7 @@ import { Broadcaster } from "./broadcast.js";
 import { DRIVE_ALIASES, LAYOUT, loadConfig } from "./config.js";
 import { Contacts, type BroadcastAudience } from "./contacts.js";
 import { MessageLog } from "./message-log.js";
+import { Moderation } from "./moderation.js";
 import { installFileLogging, startRetention } from "./retention.js";
 import { DRIVE_READONLY_SCOPE, GoogleAuth, ServiceAccountAuth, type TokenSource } from "./google/auth.js";
 import { AdminDesk } from "./tools/admin.js";
@@ -108,8 +109,9 @@ async function connectDrive(): Promise<{ dir: string; label: string; exclude: st
   return {
     dir: drive.dir,
     label: "Drive",
-    // Everything on Drive is knowledge except the folders and the document that configure the bot.
-    exclude: [...DRIVE_ALIASES.procedures, ...DRIVE_ALIASES.listings, ...DRIVE_ALIASES.systemPrompt],
+    // Everything on Drive is knowledge except the folders and the document that configure the bot,
+    // and the folder of blank templates for the people editing it.
+    exclude: [...DRIVE_ALIASES.procedures, ...DRIVE_ALIASES.listings, ...DRIVE_ALIASES.systemPrompt, ...DRIVE_ALIASES.templates],
     sync: async () => {
       await drive.sync().catch((error: Error) => {
         throw / 404 /.test(error.message) ? new Error(`${error.message} -> ${notFoundHint}`) : error;
@@ -190,6 +192,9 @@ contacts.onUnnamedGroup = (group, by) =>
   );
 const messageLog = new MessageLog(data("messages"));
 const broadcaster = new Broadcaster(hub, contacts, scheduler, (recipient, text) => messageLog.outgoing(recipient, text));
+const moderation = new Moderation(data("moderation.json"), messageLog, contacts, config.admins, config.userRepliesPerHour, async (prompt) =>
+  responseText(await models.generate({ contents: prompt })),
+);
 
 /** Every message the bot sends goes through here, so it is also written to the message log. */
 async function say(channel: ChannelId, target: Target, text: string): Promise<void> {
@@ -216,6 +221,7 @@ const agent = new Agent({
     ...scheduler.tools(),
     ...broadcaster.tools(),
     ...contacts.tools(),
+    ...moderation.tools(),
     ...desk.tools(),
     ...httpTools.tools(),
     ...mcp.tools(),
@@ -228,8 +234,8 @@ const agent = new Agent({
         documents: knowledge.describe(),
         canAskAdmin: config.admins.length > 0,
         procedures: procedures.describe(),
-        // Personal notes stay out of group chats, where everyone would see them used.
-        userNotes: context.message.isGroup ? "" : memory.describe(userKey(context.message)),
+        // Personal notes stay out of group chats, where everyone would see them used; admins decide that for themselves.
+        userNotes: context.message.isGroup && !context.isAdmin ? "" : memory.describe(userKey(context.message)),
         conversationSummary: conversations.summary(conversationKey(context.message)),
         // What others said in the group since the bot last looked; logged for free, read only now.
         groupContext: context.message.isGroup ? describeRecent(context.message) : "",
@@ -238,7 +244,7 @@ const agent = new Agent({
     ),
 });
 
-await Promise.all([embedder?.load(), contacts.load(), instructions.load(), httpTools.load(), procedures.load(), memory.load(), conversations.load(), desk.load(), mcp.connect(config.mcpConfigFile)]);
+await Promise.all([embedder?.load(), contacts.load(), moderation.load(),instructions.load(), httpTools.load(), procedures.load(), memory.load(), conversations.load(), desk.load(), mcp.connect(config.mcpConfigFile)]);
 await knowledge.start(config.knowledgeRefreshMinutes);
 
 const HELP = `Lệnh có thể dùng:
@@ -256,6 +262,11 @@ const ADMIN_HELP = `
 /tickets - các câu hỏi đang chờ bạn trả lời
 /users, /groups - danh sách người dùng và nhóm bot đã gặp
 /namegroup <ID nhóm> <tên> - đặt tên cho một nhóm (Zalo không cho bot biết tên nhóm)
+/deluser <ID>, /delgroup <ID nhóm> - xoá khỏi danh sách (ví dụ ID cũ không còn dùng)
+/top [số ngày] - ai nhắn nhiều, tốn nhiều lượt AI nhất (mặc định 7 ngày)
+/history <ID> [số tin] - xem tin gần nhất của một người hoặc một nhóm
+/review [ID] [số ngày] - AI rà soát tin nhắn tìm hành vi bất thường (bỏ trống ID: tất cả; mặc định hôm nay)
+/ban <ID> [lý do], /unban <ID>, /bans - chặn, bỏ chặn, xem người bị chặn
 /broadcast [users|groups|all] <nội dung> - soạn thông báo gửi hàng loạt (mặc định: users)
 /confirm <mã>, /cancel <mã> - gửi hoặc huỷ một bản nháp thông báo
 /keys - xem model đang dùng và khoá API nào đang bị chặn vì hết hạn mức
@@ -296,14 +307,17 @@ async function handleCommand(message: IncomingMessage, isAdmin: boolean): Promis
     return outcome;
   }
   if (text.startsWith("/deltask")) return "Cách dùng: /deltask <mã>. Nhắn /tasks để xem mã.";
-  // Admin commands list people and trigger mass messages: private chat only, never in a group.
-  if (!isAdmin || message.isGroup) return null;
+  // Admins get their commands wherever they ask, groups included: what the group then sees is their call.
+  if (!isAdmin) return null;
   if (text === "/reload") return reloadAll();
   if (text === "/users") return contacts.describeUsers();
   if (text === "/groups") return contacts.describeGroups();
   const naming = /^\/namegroup\s+(\S+)\s+([\s\S]+)$/.exec(text);
   if (naming) return contacts.nameGroup(naming[1]!, naming[2]!);
   if (text.startsWith("/namegroup")) return "Cách dùng: /namegroup <ID nhóm> <tên nhóm>. Nhắn /groups để xem ID.";
+  const removals = /^\/(?:deluser|delgroup)\s+([\s\S]+)$/.exec(text)?.[1]?.split(/[\s,]+/).filter(Boolean);
+  if (removals) return removals.map((ref) => contacts.remove(ref)).join("\n");
+  if (text === "/deluser" || text === "/delgroup") return "Cách dùng: /deluser <ID> hoặc /delgroup <ID nhóm>, nhiều ID thì cách nhau bằng dấu cách. Nhắn /users hoặc /groups để xem ID.";
   const broadcast = /^\/broadcast(?:\s+(users|groups|all))?\s+([\s\S]+)$/.exec(text);
   if (broadcast) {
     try {
@@ -320,6 +334,25 @@ async function handleCommand(message: IncomingMessage, isAdmin: boolean): Promis
     conversations.append(conversationKey(message), text, outcome);
     return outcome;
   }
+  const top = /^\/top(?:\s+(\d+))?$/.exec(text);
+  if (top) return moderation.top(Number(top[1]) || 7);
+  const history = /^\/history\s+(\S+)(?:\s+(\d+))?$/.exec(text);
+  if (history) return moderation.history(history[1]!, Number(history[2]) || 20);
+  if (text === "/history") return "Cách dùng: /history <ID người hoặc nhóm> [số tin]. Nhắn /top, /users hoặc /groups để xem ID.";
+  const review = /^\/review(?:\s+(.*))?$/.exec(text);
+  if (review) {
+    // "/review", "/review 3", "/review bot:abc", "/review bot:abc 3"
+    const words = (review[1] ?? "").split(/\s+/).filter(Boolean);
+    const days = words.length && /^\d+$/.test(words.at(-1)!) ? Number(words.pop()) : 1;
+    await hub.typing(message);
+    return moderation.review(words.join(" "), days);
+  }
+  const ban = /^\/ban\s+(\S+)(?:\s+([\s\S]+))?$/.exec(text);
+  if (ban) return moderation.ban(ban[1]!, ban[2] ?? "");
+  const unban = /^\/unban\s+(\S+)$/.exec(text);
+  if (unban) return moderation.unban(unban[1]!);
+  if (text === "/ban" || text === "/unban") return "Cách dùng: /ban <ID> [lý do], /unban <ID>. Nhắn /top hoặc /users để xem ID.";
+  if (text === "/bans") return moderation.describeBans();
   if (text === "/procedures") return procedures.list();
   if (text === "/tickets") return desk.listOpen();
   if (text === "/keys") {
@@ -380,12 +413,24 @@ async function handle(message: IncomingMessage): Promise<void> {
   console.log(`[${message.channel}] ${message.senderName || message.senderId}: ${message.text}`);
 
   const isAdmin = desk.isAdmin(message);
+  // A banned person is still logged above, but gets no answer and costs no tokens.
+  if (!isAdmin && moderation.isBanned(message)) {
+    console.log(`[moderation] ignored banned ${message.channel}:${message.senderId}`);
+    return;
+  }
   let typing: NodeJS.Timeout | undefined;
   try {
     const direct = await handleCommand(message, isAdmin);
     if (direct !== null) return await say(message.channel, message, direct);
     if (message.isGroup && !groupBudgetLeft(message)) {
       console.warn(`[${message.channel}] group ${message.threadId} is over its hourly reply limit; message logged, not answered`);
+      return;
+    }
+    // One person cannot burn the shared API quota by writing nonstop.
+    const turn = moderation.takeReply(message, isAdmin);
+    if (!turn.allowed) {
+      console.warn(`[moderation] ${message.channel}:${message.senderId} is over the hourly reply limit; message logged, not answered`);
+      if (turn.warn && !message.isGroup) await say(message.channel, message, "Bạn đã nhắn khá nhiều trong một giờ qua nên mình tạm nghỉ một lúc. Bạn quay lại sau ít phút nhé.");
       return;
     }
     // Answers can take a while (tool calls, slow models), so keep the "typing" indicator alive.

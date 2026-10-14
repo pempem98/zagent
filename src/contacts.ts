@@ -150,6 +150,12 @@ export class Contacts {
     return named.length === 1 ? named[0] : undefined;
   }
 
+  /** Finds a person by `channel:id` or a bare id. */
+  findUser(ref: string): UserRecord | undefined {
+    const wanted = ref.trim();
+    return this.file.data.users[wanted] ?? (wanted ? this.users.find((user) => user.id === wanted) : undefined);
+  }
+
   /**
    * Gives a group the name an admin chose, for platforms that tell none. `ref` is the thread id,
    * with or without its channel prefix. Returns the text to answer with.
@@ -162,6 +168,29 @@ export class Contacts {
     group.name = label;
     this.saveSoon();
     return `Đã đặt tên nhóm ${group.channel}:${group.threadId} là "${label}".`;
+  }
+
+  /**
+   * Drops a user or group from the lists, e.g. ids left over from an older bot token. `ref` is
+   * `channel:id`, a bare id, or a group's name. Whoever writes again is recorded afresh.
+   * Returns the text to answer with.
+   */
+  remove(ref: string): string {
+    const wanted = ref.trim();
+    const user = this.findUser(wanted);
+    const group = this.findGroup(wanted);
+    if (user && group) return `"${wanted}" vừa là người dùng vừa là nhóm; ghi kèm kênh, ví dụ ${user.channel}:${user.id}.`;
+    if (user) {
+      delete this.file.data.users[`${user.channel}:${user.id}`];
+      this.saveSoon();
+      return `Đã xoá người dùng ${user.name || "(không tên)"} (${user.channel}:${user.id}) khỏi danh sách.`;
+    }
+    if (group) {
+      delete this.file.data.groups[`${group.channel}:${group.threadId}`];
+      this.saveSoon();
+      return `Đã xoá nhóm ${group.name || "(chưa có tên)"} (${group.channel}:${group.threadId}) khỏi danh sách.`;
+    }
+    return `Không có người dùng hay nhóm nào khớp "${wanted}". Nhắn /users hoặc /groups để xem ID.`;
   }
 
   /** Returns false when the person is not known yet (never wrote to the bot). */
@@ -234,9 +263,8 @@ export class Contacts {
           required: ["kind"],
         },
         audience: "admin",
-        run: async (args, { message }) => {
-          // Same rule as /users and /groups: the list must not be shown where a whole group reads it.
-          if (message.isGroup) throw new Error("Chỉ xem được danh sách này trong cuộc trò chuyện riêng với bot");
+        // Admin only, in private chats and groups alike, same as /users and /groups.
+        run: async (args) => {
           return args.kind === "groups" ? this.describeGroups(50) : this.describeUsers(50);
         },
       },
@@ -259,6 +287,18 @@ export class Contacts {
           return this.nameGroup(ref, String(args.name ?? ""));
         },
       },
+      {
+        name: "remove_contact",
+        description:
+          "Xoá một người dùng hoặc một nhóm khỏi danh sách của bot, khi quản trị viên yêu cầu (ví dụ ID cũ không còn dùng, nhóm bot đã rời). Chỉ xoá khỏi sổ của bot: không chặn ai, và người hay nhóm đó nhắn lại thì được ghi nhận lại. Lấy ID bằng list_contacts trước; mỗi lần gọi xoá một mục.",
+        parameters: {
+          type: "object",
+          properties: { id: { type: "string", description: "ID dạng kênh:ID (ví dụ bot:1612f1d0..., bot:zgr-...), ID trần, hoặc tên nhóm." } },
+          required: ["id"],
+        },
+        audience: "admin",
+        run: async (args) => this.remove(String(args.id ?? "")),
+      },
     ];
   }
 
@@ -278,7 +318,7 @@ export class Contacts {
   }
 }
 
-function ago(at: number): string {
+export function ago(at: number): string {
   const minutes = Math.round((Date.now() - at) / 60_000);
   if (minutes < 60) return `${minutes} phút trước`;
   if (minutes < 48 * 60) return `${Math.round(minutes / 60)} giờ trước`;
