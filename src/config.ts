@@ -52,6 +52,8 @@ export interface Config {
   userRepliesPerHour: number;
   /** Who may trigger web search and page fetching; "off" removes both tools. */
   webAudience: Audience | "off";
+  /** Fields of tool results that only admins may see (e.g. which agency holds a unit); removed before the model reads them. */
+  adminOnlyFields: string[];
 }
 
 /**
@@ -101,6 +103,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     groupRepliesPerHour: env.GROUP_REPLIES_PER_HOUR?.trim() ? Math.max(0, Number(env.GROUP_REPLIES_PER_HOUR) || 0) : 30,
     userRepliesPerHour: env.USER_REPLIES_PER_HOUR?.trim() ? Math.max(0, Number(env.USER_REPLIES_PER_HOUR) || 0) : 20,
     webAudience: env.WEB_AUDIENCE === "admin" ? "admin" : /^(off|none|0|false)$/i.test(env.WEB_AUDIENCE ?? "") ? "off" : "all",
+    adminOnlyFields: env.ADMIN_ONLY_FIELDS === undefined ? ["Đại lý nắm"] : list(env.ADMIN_ONLY_FIELDS),
   };
 }
 

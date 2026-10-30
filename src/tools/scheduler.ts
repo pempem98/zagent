@@ -48,6 +48,10 @@ const PERIOD_MS: Record<Repeat, number> = { none: 0, daily: 86_400_000, weekly: 
 const TICK_MS = 20_000;
 /** A cron schedule may not fire more often than this: every agent run costs a model call and a message. */
 const MIN_CRON_GAP_MS = 5 * 60_000;
+/** A repeating task that fails this many runs in a row is dropped instead of failing forever. */
+const MAX_CONSECUTIVE_FAILURES = 5;
+/** Delivery errors that will never succeed on retry: the chat or group is gone or the bot was removed from it. */
+const UNREACHABLE_CHAT = /chat_id is inva(?:l)?i(?:l)?d|chat not found|not a member|blocked/i;
 
 /**
  * Lets the agent act later without being prompted: reminders, follow-ups, recurring reports.
@@ -57,6 +61,7 @@ export class Scheduler {
   private readonly file: JsonFile<Store>;
   private timer?: NodeJS.Timeout;
   private readonly running = new Set<number>();
+  private readonly failures = new Map<number, number>();
 
   constructor(
     path: string,
@@ -87,9 +92,26 @@ export class Scheduler {
       else task.at = next;
       await this.file.save();
       void this.run(task)
-        .catch((error) => console.error(`[scheduler] task #${task.id} failed:`, error))
+        .then(() => this.failures.delete(task.id))
+        .catch((error) => this.handleFailure(task, error))
         .finally(() => this.running.delete(task.id));
     }
+  }
+
+  /** Logs a failed run, and drops a task that can no longer succeed so it stops erroring on every run. */
+  private async handleFailure(task: ScheduledTask, error: unknown): Promise<void> {
+    console.error(`[scheduler] task #${task.id} failed:`, error);
+    const count = (this.failures.get(task.id) ?? 0) + 1;
+    this.failures.set(task.id, count);
+    const unreachable = UNREACHABLE_CHAT.test(String((error as Error)?.message ?? error));
+    if (!unreachable && count < MAX_CONSECUTIVE_FAILURES) return;
+    if (!this.file.data.tasks.some((candidate) => candidate.id === task.id)) return;
+    this.remove(task.id);
+    this.failures.delete(task.id);
+    await this.file.save();
+    console.warn(
+      `[scheduler] task #${task.id} removed: ${unreachable ? "its chat is no longer reachable" : `${count} failures in a row`} (${task.channel}:${task.threadId}, "${task.instruction}")`,
+    );
   }
 
   /** Schedules a system job on behalf of an admin; results are reported in the admin's own chat. */

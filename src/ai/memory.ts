@@ -17,9 +17,9 @@ interface Conversation {
 }
 
 /** Compact once a conversation holds this many messages... */
-const COMPACT_ABOVE = 30;
+const COMPACT_ABOVE = 40;
 /** ...keeping this many of the newest verbatim. */
-const KEEP_RECENT = 16;
+const KEEP_RECENT = 24;
 const FORGET_AFTER_DAYS = 90;
 
 /**

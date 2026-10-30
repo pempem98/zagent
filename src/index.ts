@@ -212,6 +212,7 @@ async function reloadAll(): Promise<string> {
 
 const agent = new Agent({
   generate: (request) => models.generate(request),
+  adminOnlyFields: config.adminOnlyFields,
   history: conversations,
   tools: () => [
     ...knowledge.tools(),

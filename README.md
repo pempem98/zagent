@@ -136,7 +136,7 @@ Nếu đã bật Google Drive (xem mục "Google Drive"), bạn có thể soạn
 | Tạo trên Drive | Tác dụng |
 |---|---|
 | Thư mục tên `procedures`, mỗi quy trình là một Google Docs | Tên file là tên quy trình. Trong file: dòng `Khi nào dùng: ...`, rồi các bước |
-| Một Google Docs tên `system-prompt` | Thay cho `workspace/system-prompt.md`. Xoá file này thì bot quay lại dùng file trong máy |
+| Một Google Docs tên `system-prompt` | Chỉ dùng khi `workspace/system-prompt.md` bị thiếu hoặc trống; file trong máy luôn được ưu tiên |
 
 - Thay đổi có hiệu lực ở lần đồng bộ kế tiếp (10 phút một lần), hoặc ngay khi admin nhắn `/reload`.
 - Quy trình trên Drive trùng tên với quy trình trong máy thì bản trên Drive được dùng. Quy trình từ Drive không sửa hay xoá được từ khung chat; phải sửa trên Drive.

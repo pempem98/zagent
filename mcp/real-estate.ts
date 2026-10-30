@@ -290,8 +290,8 @@ const TOOLS = [
   },
   {
     name: "get_listing",
-    description: "Xem đầy đủ thông tin một căn theo mã trong bảng hàng.",
-    inputSchema: { type: "object", properties: { ma: text("Mã căn, ví dụ 'CH-Q7-01'.") }, required: ["ma"] },
+    description: "Xem đầy đủ chi tiết một căn hộ theo mã căn trong bảng hàng (bao gồm: Link phiếu tính giá / PTG, Link ảnh chỉ căn / layout thiết kế, giá bán, chính sách bán hàng, đại lý nắm...). Luôn dùng công cụ này khi người dùng hỏi thông tin, hỏi link PTG, xin phiếu tính giá, hỏi mặt bằng/layout, hỏi đại lý của một mã căn cụ thể.",
+    inputSchema: { type: "object", properties: { ma: text("Mã căn, ví dụ 'Y2-41-18', 'HH-B-37-22', 'BM56-05'.") }, required: ["ma"] },
     run: (args: Record<string, unknown>) => getListing(String(args.ma ?? "")),
   },
   {

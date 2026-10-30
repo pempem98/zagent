@@ -16,6 +16,8 @@ services:
       # "not configured", but you will have to delete it before adding the real file.
       - ./mcp.json:/app/mcp.json:ro
       - ./tools.json:/app/tools.json:ro
+      - ./mcp:/app/mcp
+      - ./src:/app/src
       # Content you author: system prompt, procedures, documents, listings.
       - ./workspace:/app/workspace
       # State the bot writes: sessions, memory, contacts, message logs, console logs, Drive mirror.

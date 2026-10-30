@@ -18,9 +18,15 @@ export interface AgentOptions {
   systemPrompt: (context: ToolContext) => string;
   history: History;
   maxSteps?: number;
+  /** Result fields hidden from non-admins; see Config.adminOnlyFields. */
+  adminOnlyFields?: string[];
 }
 
 const MAX_TOOL_RESULT_CHARS = 20_000;
+/** How much of what the tools looked up is kept in history, so follow-ups ("căn đó thì sao?") keep their context. */
+const MAX_TRACE_CHARS = 1_500;
+/** A trace note copied into an answer by the model; never sent to the user. */
+const TRACE_BLOCK = /\[Ghi chú nội bộ[\s\S]*?\]\s*$/;
 const FALLBACK = "Xin lỗi, mình chưa xử lý được yêu cầu này. Bạn thử diễn đạt lại giúp mình nhé.";
 
 /** Gemini tool-calling loop: the model plans, calls tools, reads results and repeats until it can answer. */
@@ -55,6 +61,7 @@ export class Agent {
         : undefined,
     };
     let answer = "";
+    const trace: string[] = [];
 
     for (let step = 0; step < this.maxSteps; step++) {
       const response = await this.options.generate({ contents, config });
@@ -66,6 +73,7 @@ export class Agent {
           .filter((part) => part.text && !part.thought)
           .map((part) => part.text)
           .join("")
+          .replace(TRACE_BLOCK, "")
           .trim();
         break;
       }
@@ -74,10 +82,12 @@ export class Agent {
       contents.push(content!);
       const results = await Promise.all(calls.map((part) => this.runTool(part, tools, context)));
       contents.push({ role: "user", parts: results });
+      trace.push(...results.map(describeCall));
     }
 
     answer ||= FALLBACK;
-    this.options.history.append(key, userText, answer);
+    // The user sees only the answer; history also keeps a short note of what was looked up.
+    this.options.history.append(key, userText, withTrace(answer, trace));
     return answer;
   }
 
@@ -88,7 +98,9 @@ export class Agent {
     try {
       if (!tool) throw new Error(`Unknown or not permitted tool: ${name}`);
       console.log(`[agent] ${name}(${JSON.stringify(args).slice(0, 200)})`);
-      response = { output: truncate(await tool.run(args, context)) };
+      let output = await tool.run(args, context);
+      if (!context.isAdmin && this.options.adminOnlyFields?.length) output = redact(output, this.options.adminOnlyFields);
+      response = { output: truncate(output) };
     } catch (error) {
       console.error(`[agent] tool ${name} failed:`, error);
       response = { error: error instanceof Error ? error.message : String(error) };
@@ -96,6 +108,42 @@ export class Agent {
     return { functionResponse: { id, name, response } };
   }
 
+}
+
+/** Removes admin-only fields from a tool result, whether it is an object or JSON text (as MCP tools return). */
+export function redact(value: unknown, fields: string[]): unknown {
+  const hidden = new Set(fields.map((field) => field.toLocaleLowerCase("vi")));
+  const strip = (node: unknown): unknown => {
+    if (Array.isArray(node)) return node.map(strip);
+    if (node && typeof node === "object") {
+      return Object.fromEntries(
+        Object.entries(node)
+          .filter(([name]) => !hidden.has(name.toLocaleLowerCase("vi")))
+          .map(([name, child]) => [name, strip(child)]),
+      );
+    }
+    return node;
+  };
+  if (typeof value === "string") {
+    try {
+      return JSON.stringify(strip(JSON.parse(value)));
+    } catch {
+      return value;
+    }
+  }
+  return strip(value);
+}
+
+function describeCall(part: Part): string {
+  const { name, response } = part.functionResponse!;
+  const output = response?.error ? `lỗi: ${response.error}` : JSON.stringify(response?.output ?? "");
+  return `${name}: ${output.length > 400 ? `${output.slice(0, 400)}…` : output}`;
+}
+
+function withTrace(answer: string, trace: string[]): string {
+  if (trace.length === 0) return answer;
+  const note = trace.join("\n").slice(0, MAX_TRACE_CHARS);
+  return `${answer}\n\n[Ghi chú nội bộ — dữ liệu đã tra ở lượt này, không gửi cho người dùng:\n${note}]`;
 }
 
 export function conversationKey(target: { channel: string; threadId: string }): string {
