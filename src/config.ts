@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import type { Audience } from "./ai/tools.js";
 import type { ChannelId } from "./channels/types.js";
 
@@ -63,6 +64,7 @@ export interface Config {
     activeFilter?: { column: string; value: string };
     /** End-of-month message counts by these columns instead of listing names. */
     summaryBy: { label: string; column: string }[];
+    wishesFile: string;
   };
 }
 
@@ -115,7 +117,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     webAudience: env.WEB_AUDIENCE === "admin" ? "admin" : /^(off|none|0|false)$/i.test(env.WEB_AUDIENCE ?? "") ? "off" : "all",
     adminOnlyFields: env.ADMIN_ONLY_FIELDS === undefined ? ["Đại lý nắm"] : list(env.ADMIN_ONLY_FIELDS),
     members: env.MEMBERS_SHEET?.trim()
-      ? { url: env.MEMBERS_SHEET.trim(), columns: list(env.MEMBERS_COLUMNS), activeFilter: parseColumnValue(env.MEMBERS_ACTIVE), summaryBy: list(env.MEMBERS_SUMMARY_BY).map(parseSummaryColumn) }
+      ? { url: env.MEMBERS_SHEET.trim(), columns: list(env.MEMBERS_COLUMNS), activeFilter: parseColumnValue(env.MEMBERS_ACTIVE), summaryBy: list(env.MEMBERS_SUMMARY_BY).map(parseSummaryColumn),
+          wishesFile: join(env.WORKSPACE_DIR || "workspace", "birthday-wishes.txt"),
+        }
       : undefined,
   };
 }

@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import type { Tool } from "../ai/tools.js";
 import type { IncomingMessage } from "../channels/types.js";
 import type { TokenSource } from "../google/auth.js";
@@ -45,7 +46,23 @@ export interface MemberSheetOptions {
    * message lists every name, day by day.
    */
   summaryBy: { label: string; column: string }[];
+  /** Text file of sample wishes, one per line, `{ten}` standing for "anh Chiến"; DEFAULT_WISHES when missing. */
+  wishesFile?: string;
 }
+
+/** Sample wishes sent under each name; `{ten}` becomes "anh Chiến", "chị Lư" or the bare name. */
+export const DEFAULT_WISHES = [
+  "🎂 Chúc mừng sinh nhật {ten}! Chúc {ten} tuổi mới thật nhiều sức khoẻ, niềm vui và thành công rực rỡ 🎉✨",
+  "🎉 Happy birthday {ten}! Chúc {ten} tuổi mới chốt deal ầm ầm, tiền về đầy túi, luôn rạng rỡ như hôm nay 💰🥳",
+  "🌸 Mừng sinh nhật {ten}! Chúc {ten} một năm mới an yên, hạnh phúc bên gia đình và gặt hái thật nhiều thành công 💐💖",
+  "🥳 Sinh nhật vui vẻ {ten}! Chúc {ten} luôn tràn đầy năng lượng, công việc hanh thông, mọi điều như ý 🍀🎈",
+  "🎈 Chúc mừng sinh nhật {ten}! Tuổi mới chúc {ten} vạn sự như ý, sức khoẻ dồi dào, sự nghiệp thăng hoa 🚀🌟",
+  "💐 Chúc {ten} sinh nhật thật ý nghĩa! Mong {ten} luôn vui vẻ, trẻ trung và thành công hơn nữa trong năm mới 🎂🎊",
+  "🎁 Happy birthday {ten}! Chúc {ten} tuổi mới nhiều may mắn, nhiều niềm vui và thật nhiều quà nhé 😍🎉",
+  "🌟 Chúc mừng sinh nhật {ten}! Cảm ơn {ten} đã luôn đồng hành cùng cả nhà. Chúc {ten} tuổi mới bùng nổ thành công 💪🔥",
+  "🍰 Sinh nhật vui vẻ nhé {ten}! Chúc {ten} luôn khoẻ mạnh, hạnh phúc, cười thật nhiều và đạt mọi mục tiêu đã đặt ra 🎯😄",
+  "🎊 Chúc mừng sinh nhật {ten}! Chúc {ten} một tuổi mới rực rỡ, gia đình êm ấm, công việc thuận buồm xuôi gió ⛵💖",
+];
 
 /** Rows are fetched again after this long, so edits to the sheet show up without a reload. */
 const CACHE_MS = 5 * 60_000;
@@ -105,8 +122,17 @@ export class MemberSheet {
     const messages: string[] = [];
     const due = members.filter((member) => sameDay(celebration(member.birthday!, tomorrow.year), tomorrow));
     if (due.length) {
+      const wishes = await this.wishes();
+      // A different wish for each person, and a different starting point each day.
+      const start = Math.round(toUtc(tomorrow) / DAY_MS);
       messages.push(
-        [`🎂 Ngày mai, ${WEEKDAYS[weekday(tomorrow)]} ${formatDay(tomorrow)}, là sinh nhật của:`, ...due.map((member) => `- ${member.name}`), "Cả nhà nhớ gửi lời chúc mừng nhé! 🎉"].join("\n"),
+        [
+          `🎂🎉 Ngày mai, ${WEEKDAYS[weekday(tomorrow)]} ${formatDay(tomorrow)}, là sinh nhật của:`,
+          ...due.map((member) => `🎈 ${member.name}`),
+          "",
+          "💌 Lời chúc mẫu, cả nhà copy gửi luôn nhé:",
+          ...due.map((member, index) => `• ${wishes[(start + index) % wishes.length]!.replaceAll("{ten}", callName(member))}`),
+        ].join("\n"),
       );
     }
     else if (preview) messages.push(`(Ngày mai ${formatDay(tomorrow)} không có ai sinh nhật nên 9h sẽ không gửi tin nhắc.)`);
@@ -229,6 +255,17 @@ export class MemberSheet {
       })),
       ...(members.length > limit ? { note: `Chỉ hiện ${limit}/${members.length} người.` } : {}),
     };
+  }
+
+  /** Read on every reminder, so edits to the file apply the next morning without a restart. */
+  private async wishes(): Promise<string[]> {
+    if (!this.options.wishesFile) return DEFAULT_WISHES;
+    const text = await readFile(this.options.wishesFile, "utf8").catch(() => "");
+    const lines = text
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line && !line.startsWith("#"));
+    return lines.length ? lines : DEFAULT_WISHES;
   }
 
   private async read(): Promise<LoadedSheet> {
@@ -396,6 +433,15 @@ function monthList(members: Member[], year: number, month: number): string {
     .sort((a, b) => a[0] - b[0])
     .map(([day, names]) => `${pad(day)}/${pad(month)}: ${names.sort((a, b) => a.localeCompare(b, "vi")).join(", ")}`);
   return [`📅 Sinh nhật tháng ${month}/${year} (${total} người):`, ...lines].join("\n");
+}
+
+/** "anh Chiến", "chị Lư": the given name (last word) with a title from a gender column; the full name when there is none. */
+function callName(member: Member): string {
+  const gender = fold(Object.entries(member.fields).find(([column]) => /giới\s*tính|gender/i.test(column))?.[1] ?? "");
+  const given = member.name.trim().split(/\s+/).at(-1) ?? member.name;
+  if (/^(nam|male|m)$/.test(gender)) return `anh ${given}`;
+  if (/^(nu|female|f)$/.test(gender)) return `chị ${given}`;
+  return member.name;
 }
 
 /** Lower case, no accents, single spaces: "Đặng  Thị" and "dang thi" compare equal. */
