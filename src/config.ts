@@ -65,6 +65,8 @@ export interface Config {
     /** End-of-month message counts by these columns instead of listing names. */
     summaryBy: { label: string; column: string }[];
     wishesFile: string;
+    /** Shown under each name in the reminder (label=column). */
+    details: { label: string; column: string }[];
   };
 }
 
@@ -119,6 +121,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     members: env.MEMBERS_SHEET?.trim()
       ? { url: env.MEMBERS_SHEET.trim(), columns: list(env.MEMBERS_COLUMNS), activeFilter: parseColumnValue(env.MEMBERS_ACTIVE), summaryBy: list(env.MEMBERS_SUMMARY_BY).map(parseSummaryColumn),
           wishesFile: join(env.WORKSPACE_DIR || "workspace", "birthday-wishes.txt"),
+          details: list(env.MEMBERS_REMINDER_DETAILS).map(parseSummaryColumn),
         }
       : undefined,
   };

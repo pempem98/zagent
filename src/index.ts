@@ -150,7 +150,7 @@ async function connectMembers(options: NonNullable<typeof config.members>): Prom
     }
   }
   return new MemberSheet(
-    { ...options, auth, accessHint: auth ? `Chia sẻ sheet cho ${auth.email} (quyền Người xem).` : undefined },
+    { ...options, auth, generate: async (prompt) => responseText(await models.generate({ contents: prompt })), accessHint: auth ? `Chia sẻ sheet cho ${auth.email} (quyền Người xem).` : undefined },
     // Customers talk to this bot too: the list is only for admins and the groups that get the reminders.
     (message, isAdmin) => isAdmin || (message.isGroup && scheduler.hasJob("birthdays", message.channel, message.threadId)),
   );

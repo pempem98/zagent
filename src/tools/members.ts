@@ -48,6 +48,13 @@ export interface MemberSheetOptions {
   summaryBy: { label: string; column: string }[];
   /** Text file of sample wishes, one per line, `{ten}` standing for "anh Chiến"; DEFAULT_WISHES when missing. */
   wishesFile?: string;
+  /** Shown under each name in the reminder, e.g. Chức vụ, Phòng, Vùng, Khối; empty cells are left out. */
+  details: { label: string; column: string }[];
+  /**
+   * Asks a model to write the wishes; the samples then only set the tone. Without it, or when the
+   * model fails, the samples are sent as they are.
+   */
+  generate?: (prompt: string) => Promise<string>;
 }
 
 /** Sample wishes sent under each name; `{ten}` becomes "anh Chiến", "chị Lư" or the bare name. */
@@ -122,16 +129,23 @@ export class MemberSheet {
     const messages: string[] = [];
     const due = members.filter((member) => sameDay(celebration(member.birthday!, tomorrow.year), tomorrow));
     if (due.length) {
-      const wishes = await this.wishes();
-      // A different wish for each person, and a different starting point each day.
-      const start = Math.round(toUtc(tomorrow) / DAY_MS);
+      const details = this.options.details.map(({ label, column }) => ({ label, header: findColumn(sheet.columns, column) }));
+      const describe = (member: Member) =>
+        details
+          .map(({ label, header }) => (member.fields[header] ? `${label}: ${member.fields[header]}` : ""))
+          .filter(Boolean)
+          .join(" | ");
+      const wishes = await this.writeWishes(due, tomorrow, describe);
       messages.push(
         [
           `🎂🎉 Ngày mai, ${WEEKDAYS[weekday(tomorrow)]} ${formatDay(tomorrow)}, là sinh nhật của:`,
-          ...due.map((member) => `🎈 ${member.name}`),
+          ...due.flatMap((member) => {
+            const about = describe(member);
+            return [`🎈 ${member.name}${member.birthday!.year ? ` (${member.birthday!.year})` : ""}`, ...(about ? [`     ${about}`] : [])];
+          }),
           "",
           "💌 Lời chúc mẫu, cả nhà copy gửi luôn nhé:",
-          ...due.map((member, index) => `• ${wishes[(start + index) % wishes.length]!.replaceAll("{ten}", callName(member))}`),
+          ...wishes.map((wish) => `• ${wish}`),
         ].join("\n"),
       );
     }
@@ -255,6 +269,36 @@ export class MemberSheet {
       })),
       ...(members.length > limit ? { note: `Chỉ hiện ${limit}/${members.length} người.` } : {}),
     };
+  }
+
+  /** One wish per person, in order: written by the model when there is one, else picked from the samples. */
+  private async writeWishes(people: Member[], day: Day, describe: (member: Member) => string): Promise<string[]> {
+    const samples = await this.wishes();
+    // A different sample for each person, and a different starting point each day.
+    const start = Math.round(toUtc(day) / DAY_MS);
+    const fallback = people.map((member, index) => samples[(start + index) % samples.length]!.replaceAll("{ten}", callName(member)));
+    if (!this.options.generate) return fallback;
+    const prompt = [
+      `Viết lời chúc mừng sinh nhật cho ${people.length} đồng nghiệp trong công ty, để cả nhóm Zalo copy gửi.`,
+      "Yêu cầu: tiếng Việt, ấm áp, vui, hợp môi trường công sở; 1-2 câu, dưới 40 từ; có 2-4 emoji; gọi đúng cách gọi được cho;",
+      "mỗi người một lời chúc khác nhau, có thể nhắc nhẹ đến công việc của họ nhưng không nhắc đến tuổi.",
+      "Phong cách tham khảo:",
+      ...samples.slice(0, 5).map((sample) => `- ${sample.replaceAll("{ten}", "anh Nam")}`),
+      "Người nhận:",
+      ...people.map((member, index) => `${index + 1}. Cách gọi: "${callName(member)}"${describe(member) ? `; ${describe(member)}` : ""}`),
+      `Chỉ trả về một mảng JSON gồm đúng ${people.length} chuỗi, theo đúng thứ tự trên, không giải thích gì thêm.`,
+    ].join("\n");
+    try {
+      const text = await this.options.generate(prompt);
+      const parsed: unknown = JSON.parse(/\[[\s\S]*\]/.exec(text)?.[0] ?? "null");
+      if (Array.isArray(parsed) && parsed.length === people.length && parsed.every((wish) => typeof wish === "string" && wish.trim())) {
+        return parsed.map((wish: string) => wish.trim());
+      }
+      throw new Error(`unexpected answer: ${text.slice(0, 200)}`);
+    } catch (error) {
+      console.warn(`[members] model could not write the wishes, using the samples: ${(error as Error).message}`);
+      return fallback;
+    }
   }
 
   /** Read on every reminder, so edits to the file apply the next morning without a restart. */
