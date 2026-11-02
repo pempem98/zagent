@@ -55,7 +55,7 @@ const MIN_CRON_GAP_MS = 5 * 60_000;
 /** A repeating task that fails this many runs in a row is dropped instead of failing forever. */
 const MAX_CONSECUTIVE_FAILURES = 5;
 /** Delivery errors that will never succeed on retry: the chat or group is gone or the bot was removed from it. */
-const UNREACHABLE_CHAT = /chat_id is inva(?:l)?i(?:l)?d|chat not found|not a member|blocked/i;
+export const UNREACHABLE_CHAT = /chat_id is inva(?:l)?i(?:l)?d|chat not found|not a member|blocked/i;
 
 /**
  * Lets the agent act later without being prompted: reminders, follow-ups, recurring reports.
@@ -145,6 +145,16 @@ export class Scheduler {
     this.file.data.tasks.push(task);
     await this.file.save();
     return task;
+  }
+
+  /** Moves every job of this type onto a new schedule, e.g. when the code changes how often it runs. */
+  async rescheduleJobs(type: ScheduledJob["type"], cron: string): Promise<number> {
+    const stale = this.file.data.tasks.filter((task) => task.job?.type === type && task.cron !== cron);
+    if (stale.length === 0) return 0;
+    const schedule = parseSchedule({ cron });
+    for (const task of stale) Object.assign(task, schedule);
+    await this.file.save();
+    return stale.length;
   }
 
   /** Whether a job of this type delivers to this chat. */

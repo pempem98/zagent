@@ -9,6 +9,7 @@ import { buildSystemPrompt, Instructions } from "./ai/prompt.js";
 import { resolveModels } from "./ai/providers.js";
 import { createHubFromEnv } from "./channels/hub.js";
 import type { ChannelId, IncomingMessage, Target } from "./channels/types.js";
+import { BIRTHDAY_CRON, BirthdayReminders } from "./birthday-reminders.js";
 import { Broadcaster } from "./broadcast.js";
 import { DRIVE_ALIASES, LAYOUT, loadConfig } from "./config.js";
 import { Contacts, type BroadcastAudience } from "./contacts.js";
@@ -172,17 +173,7 @@ const scheduler = new Scheduler(data("tasks.json"), (task) =>
     // System jobs are carried out directly, with no model call, and reported to the admin who set them.
     if (task.job) {
       console.log(`[scheduler] running ${task.job.type} job #${task.id}`);
-      if (task.job.type === "birthdays") {
-        // A sheet that cannot be read is the admins' to fix; the group hears nothing and the task stays.
-        const reminders = members
-          ? await members.reminders().catch((error: Error) => {
-              notifyAdmins(`Lịch nhắc sinh nhật #${task.id} không chạy được: ${error.message}`);
-              return [];
-            })
-          : (notifyAdmins(`Lịch nhắc sinh nhật #${task.id} bỏ qua: chưa đặt MEMBERS_SHEET trong .env.`), []);
-        for (const text of reminders) await say(task.channel, task, text);
-        return;
-      }
+      if (task.job.type === "birthdays") return birthdayReminders.run(task);
       const report =
         task.job.type === "reload"
           ? await reloadAll()
@@ -209,6 +200,8 @@ const scheduler = new Scheduler(data("tasks.json"), (task) =>
   }),
   (ref) => contacts.findGroup(ref),
 );
+
+const birthdayReminders = new BirthdayReminders(data("birthdays-sent.json"), members, (task, text) => say(task.channel, task, text), notifyAdmins);
 
 const contacts = new Contacts(data("contacts.json"), hub.ids);
 // The Bot Platform never tells a group's name, so the admins are asked for one as the group appears.
@@ -418,7 +411,7 @@ async function birthdaysCommand(message: IncomingMessage, argument: string): Pro
   if (argument === "preview") {
     return members
       .reminders(Date.now(), { preview: true })
-      .then((messages) => ["Xem trước, chỉ gửi cho bạn:", ...messages].join("\n\n———\n\n"))
+      .then((messages) => ["Xem trước, chỉ gửi cho bạn:", ...messages.map((message) => message.text)].join("\n\n———\n\n"))
       .catch((error: Error) => error.message);
   }
   const group = contacts.findGroup(argument);
@@ -430,12 +423,12 @@ async function birthdaysCommand(message: IncomingMessage, argument: string): Pro
   if (summary instanceof Error) return summary.message;
   const task = await scheduler.addJob(
     message,
-    parseSchedule({ cron: "0 9 * * *" }),
+    parseSchedule({ cron: BIRTHDAY_CRON }),
     { type: "birthdays" },
     "Nhắc sinh nhật: 9h hôm trước, và danh sách tháng sau vào ngày cuối tháng",
     group,
   );
-  const outcome = `Đã bật nhắc sinh nhật cho nhóm ${name} (mã ${task.id}): 9h sáng mỗi ngày nhắc sinh nhật ngày mai; ngày cuối tháng gửi danh sách tháng sau. Thành viên nhóm có thể hỏi bot về danh sách (nhớ tag bot).\n\n${summary}`;
+  const outcome = `Đã bật nhắc sinh nhật cho nhóm ${name} (mã ${task.id}): 9h sáng mỗi ngày nhắc sinh nhật ngày mai; ngày cuối tháng gửi tổng kết tháng sau. Gửi lỗi thì bot tự thử lại mỗi giờ đến 21h. Thành viên nhóm có thể hỏi bot về danh sách (nhớ tag bot).\n\n${summary}`;
   conversations.append(conversationKey(message), `/birthdays ${argument}`, outcome);
   return outcome;
 }
@@ -532,6 +525,10 @@ await hub.start(
   (update) => contacts.recordGroup(update),
 );
 await scheduler.start();
+await birthdayReminders.load();
+// Groups set up before the hourly retry existed still run once at 9h; bring them onto the new schedule.
+const moved = await scheduler.rescheduleJobs("birthdays", BIRTHDAY_CRON);
+if (moved) console.log(`[birthdays] ${moved} reminder task(s) moved to "${BIRTHDAY_CRON}"`);
 
 console.log(`Zalo hub running on: ${hub.ids.join(", ")} | models: ${models.labels.join(" > ")} | admins: ${config.admins.length}`);
 console.log(`System prompt: ${instructions.source} | procedures: ${procedures.count} | custom tools: ${httpTools.tools().length}`);

@@ -303,6 +303,7 @@ Bot đọc danh sách thành viên từ một Google Sheet (`MEMBERS_SHEET`), nh
 2. Admin nhắn `/birthdays check` để xem bot hiểu sheet thế nào: cột họ tên, cột ngày sinh, các cột AI được xem, các cột luôn ẩn, và ngày mai nhắc ai.
 3. Admin nhắn `/birthdays <tên hoặc ID nhóm>` để bật nhắc cho nhóm đó. Từ đó:
    - 9h sáng mỗi ngày, nếu ngày mai có người sinh nhật thì gửi tên những người đó vào nhóm; nếu không có ai thì không gửi gì.
+   - Sau đó, mỗi giờ đến 21h, bot kiểm tra lại. Tin nào chưa gửi được (lỗi mạng, Zalo lỗi, bot tắt lúc 9h, chưa đọc được sheet) thì gửi bù; tin đã gửi rồi không gửi lại. Bot ghi lại những tin đã gửi trong ngày vào `data/birthdays-sent.json`. Lần đầu lỗi trong ngày, admin nhận một tin báo; gửi bù thành công thì admin được báo lại; đến 21h vẫn không gửi được thì admin cũng được báo. Nếu sheet được bổ sung người có sinh nhật ngày mai sau khi tin đã gửi, bot không gửi lại.
    - Ngày cuối tháng, gửi thêm tin về sinh nhật tháng sau. Nếu có `MEMBERS_SUMMARY_BY` (ví dụ `Khối=KHỐI,Vùng kinh doanh=MÃ CHI NHÁNH/ VÙNG KD`, dạng `nhãn=cột`), tin chỉ đếm số người theo các cột đó; nếu không có thì tin liệt kê tên từng người theo ngày.
 
    Dưới tên mỗi người, tin nhắc ghi năm sinh và các cột liệt kê trong `MEMBERS_REMINDER_DETAILS` (dạng `nhãn=cột`, ví dụ `Chức vụ=CHỨC VỤ,Phòng=TÊN PHÒNG BO,Vùng=MÃ CHI NHÁNH/ VÙNG KD,Khối=KHỐI`); ô trống được bỏ qua.

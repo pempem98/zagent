@@ -4,6 +4,9 @@ import type { IncomingMessage } from "../channels/types.js";
 import type { TokenSource } from "../google/auth.js";
 import { parseCsv } from "./knowledge.js";
 
+/** The two messages a group can get in a day: tomorrow's birthdays, and next month's overview. */
+export type ReminderKind = "tomorrow" | "month";
+
 /** A birthday as written in the sheet; the year is often missing. */
 export interface Birthday {
   day: number;
@@ -121,14 +124,18 @@ export class MemberSheet {
   /**
    * The messages to post today: tomorrow's birthdays, and on the last day of a month, next month's
    * overview. `preview` adds that overview on any day and says so when tomorrow has no birthday.
+   * Kinds in `skip` were sent already and are not written again (nor are their wishes).
    */
-  async reminders(now = Date.now(), { preview = false } = {}): Promise<string[]> {
+  async reminders(
+    now = Date.now(),
+    { preview = false, skip = [] }: { preview?: boolean; skip?: ReminderKind[] } = {},
+  ): Promise<{ kind: ReminderKind; text: string }[]> {
     const sheet = await this.load(true);
     const members = sheet.members.filter((member) => member.active && member.birthday);
     const tomorrow = addDays(vnDay(now), 1);
-    const messages: string[] = [];
+    const messages: { kind: ReminderKind; text: string }[] = [];
     const due = members.filter((member) => sameDay(celebration(member.birthday!, tomorrow.year), tomorrow));
-    if (due.length) {
+    if (due.length && !skip.includes("tomorrow")) {
       const details = this.options.details.map(({ label, column }) => ({ label, header: findColumn(sheet.columns, column) }));
       const describe = (member: Member) =>
         details
@@ -136,8 +143,9 @@ export class MemberSheet {
           .filter(Boolean)
           .join(" | ");
       const wishes = await this.writeWishes(due, tomorrow, describe);
-      messages.push(
-        [
+      messages.push({
+        kind: "tomorrow",
+        text: [
           `🎂🎉 Ngày mai, ${WEEKDAYS[weekday(tomorrow)]} ${formatDay(tomorrow)}, là sinh nhật của:`,
           ...due.flatMap((member) => {
             const about = describe(member);
@@ -147,14 +155,18 @@ export class MemberSheet {
           "💌 Lời chúc mẫu, cả nhà copy gửi luôn nhé:",
           ...wishes.map((wish) => `• ${wish}`),
         ].join("\n"),
-      );
+      });
+    } else if (preview && !due.length) {
+      messages.push({ kind: "tomorrow", text: `(Ngày mai ${formatDay(tomorrow)} không có ai sinh nhật nên 9h sẽ không gửi tin nhắc.)` });
     }
-    else if (preview) messages.push(`(Ngày mai ${formatDay(tomorrow)} không có ai sinh nhật nên 9h sẽ không gửi tin nhắc.)`);
-    if (tomorrow.day === 1 || preview) {
+    if ((tomorrow.day === 1 || preview) && !skip.includes("month")) {
       const month = tomorrow.day === 1 ? tomorrow : addDays({ ...tomorrow, day: 1 }, daysInMonth(tomorrow.year, tomorrow.month));
-      messages.push(
-        this.options.summaryBy.length ? monthSummary(members, month.year, month.month, sheet.columns, this.options.summaryBy) : monthList(members, month.year, month.month),
-      );
+      messages.push({
+        kind: "month",
+        text: this.options.summaryBy.length
+          ? monthSummary(members, month.year, month.month, sheet.columns, this.options.summaryBy)
+          : monthList(members, month.year, month.month),
+      });
     }
     return messages;
   }
