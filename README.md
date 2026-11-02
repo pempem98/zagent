@@ -303,7 +303,9 @@ Bot đọc danh sách thành viên từ một Google Sheet (`MEMBERS_SHEET`), nh
 2. Admin nhắn `/birthdays check` để xem bot hiểu sheet thế nào: cột họ tên, cột ngày sinh, các cột AI được xem, các cột luôn ẩn, và ngày mai nhắc ai.
 3. Admin nhắn `/birthdays <tên hoặc ID nhóm>` để bật nhắc cho nhóm đó. Từ đó:
    - 9h sáng mỗi ngày, nếu ngày mai có người sinh nhật thì gửi tên những người đó vào nhóm; nếu không có ai thì không gửi gì.
-   - Ngày cuối tháng, gửi thêm danh sách sinh nhật của tháng sau, xếp theo ngày.
+   - Ngày cuối tháng, gửi thêm tin về sinh nhật tháng sau. Nếu có `MEMBERS_SUMMARY_BY` (ví dụ `Khối=KHỐI,Vùng kinh doanh=MÃ CHI NHÁNH/ VÙNG KD`, dạng `nhãn=cột`), tin chỉ đếm số người theo các cột đó; nếu không có thì tin liệt kê tên từng người theo ngày.
+
+   `/birthdays preview` cho admin xem trước cả hai tin bất cứ lúc nào. Tin xem trước chỉ gửi cho admin, không gửi vào nhóm.
 
    Tắt bằng `/tasks` rồi `/deltask <mã>`. Chỉ admin mới tắt được.
 

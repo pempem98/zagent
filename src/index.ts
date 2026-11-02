@@ -307,6 +307,7 @@ const ADMIN_HELP = `
 /unblock <tên> - mở lại một khoá API sau khi nạp thêm
 /birthdays <tên hoặc ID nhóm> - bật nhắc sinh nhật trong nhóm: 9h hôm trước, và danh sách tháng sau vào ngày cuối tháng
 /birthdays check - xem bot đọc sheet thành viên thế nào và sắp nhắc những ai
+/birthdays preview - xem trước tin nhắc ngày mai và tin tổng kết tháng sau
 #<mã> <nội dung> - trả lời một câu hỏi đang chờ`;
 
 /** Commands and admin replies that are answered without the model. Null means "let the agent answer". */
@@ -406,6 +407,7 @@ async function handleCommand(message: IncomingMessage, isAdmin: boolean): Promis
 const BIRTHDAYS_USAGE = `Cách dùng:
 /birthdays <tên hoặc ID nhóm> - bật nhắc sinh nhật trong nhóm đó (9h sáng hôm trước; ngày cuối tháng gửi danh sách tháng sau)
 /birthdays check - kiểm tra sheet và xem sắp nhắc những ai
+/birthdays preview - xem trước các tin bot sẽ gửi vào nhóm (chỉ gửi cho bạn)
 Tắt: /tasks rồi /deltask <mã>.`;
 
 /** Admin command behind `/birthdays`; returns the text to answer with. */
@@ -413,6 +415,12 @@ async function birthdaysCommand(message: IncomingMessage, argument: string): Pro
   if (!members) return "Chưa cấu hình sheet thành viên: đặt MEMBERS_SHEET=<link Google Sheet> trong .env rồi khởi động lại bot.";
   if (!argument) return BIRTHDAYS_USAGE;
   if (argument === "check") return members.check().catch((error: Error) => error.message);
+  if (argument === "preview") {
+    return members
+      .reminders(Date.now(), { preview: true })
+      .then((messages) => ["Xem trước, chỉ gửi cho bạn:", ...messages].join("\n\n———\n\n"))
+      .catch((error: Error) => error.message);
+  }
   const group = contacts.findGroup(argument);
   if (!group) return `Không tìm thấy nhóm "${argument}". Nhắn /groups để xem tên và ID các nhóm.`;
   const name = group.name || group.threadId;

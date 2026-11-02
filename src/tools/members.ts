@@ -40,6 +40,11 @@ export interface MemberSheetOptions {
   columns: string[];
   /** Only rows holding this value in this column are current members; absent keeps every row. */
   activeFilter?: { column: string; value: string };
+  /**
+   * Columns the end-of-month message counts birthdays by, instead of naming everyone. Empty: the
+   * message lists every name, day by day.
+   */
+  summaryBy: { label: string; column: string }[];
 }
 
 /** Rows are fetched again after this long, so edits to the sheet show up without a reload. */
@@ -89,9 +94,13 @@ export class MemberSheet {
     return this.loading;
   }
 
-  /** The messages to post today: tomorrow's birthdays, and on the last day of a month, next month's list. */
-  async reminders(now = Date.now()): Promise<string[]> {
-    const members = (await this.load(true)).members.filter((member) => member.active && member.birthday);
+  /**
+   * The messages to post today: tomorrow's birthdays, and on the last day of a month, next month's
+   * overview. `preview` adds that overview on any day and says so when tomorrow has no birthday.
+   */
+  async reminders(now = Date.now(), { preview = false } = {}): Promise<string[]> {
+    const sheet = await this.load(true);
+    const members = sheet.members.filter((member) => member.active && member.birthday);
     const tomorrow = addDays(vnDay(now), 1);
     const messages: string[] = [];
     const due = members.filter((member) => sameDay(celebration(member.birthday!, tomorrow.year), tomorrow));
@@ -100,7 +109,13 @@ export class MemberSheet {
         [`🎂 Ngày mai, ${WEEKDAYS[weekday(tomorrow)]} ${formatDay(tomorrow)}, là sinh nhật của:`, ...due.map((member) => `- ${member.name}`), "Cả nhà nhớ gửi lời chúc mừng nhé! 🎉"].join("\n"),
       );
     }
-    if (tomorrow.day === 1) messages.push(monthList(members, tomorrow.year, tomorrow.month));
+    else if (preview) messages.push(`(Ngày mai ${formatDay(tomorrow)} không có ai sinh nhật nên 9h sẽ không gửi tin nhắc.)`);
+    if (tomorrow.day === 1 || preview) {
+      const month = tomorrow.day === 1 ? tomorrow : addDays({ ...tomorrow, day: 1 }, daysInMonth(tomorrow.year, tomorrow.month));
+      messages.push(
+        this.options.summaryBy.length ? monthSummary(members, month.year, month.month, sheet.columns, this.options.summaryBy) : monthList(members, month.year, month.month),
+      );
+    }
     return messages;
   }
 
@@ -341,6 +356,30 @@ function celebration(birthday: Birthday, year: number): Day {
 function nextCelebration(birthday: Birthday, from: Day): Day {
   const thisYear = celebration(birthday, from.year);
   return toUtc(thisYear) >= toUtc(from) ? thisYear : celebration(birthday, from.year + 1);
+}
+
+/** "📅 Tháng 12/2026 có 124 sinh nhật", then how many in each value of each summary column. */
+function monthSummary(members: Member[], year: number, month: number, columns: string[], summaryBy: MemberSheetOptions["summaryBy"]): string {
+  const inMonth = members.filter((member) => member.birthday!.month === month);
+  if (inMonth.length === 0) return `📅 Tháng ${month}/${year} không có ai sinh nhật.`;
+  const sections = summaryBy.map(({ label, column }) => {
+    const header = findColumn(columns, column);
+    const counts = new Map<string, number>();
+    for (const member of inMonth) {
+      const value = member.fields[header] || "";
+      counts.set(value, (counts.get(value) ?? 0) + 1);
+    }
+    // Largest first; people with the cell empty come last.
+    const lines = [...counts]
+      .sort((a, b) => Number(!a[0]) - Number(!b[0]) || b[1] - a[1] || a[0].localeCompare(b[0], "vi"))
+      .map(([value, count]) => `- ${value || `Không có ${label.toLocaleLowerCase("vi")}`}: ${count}`);
+    return [`Theo ${label.toLocaleLowerCase("vi")}:`, ...lines].join("\n");
+  });
+  return [
+    `📅 Tháng ${month}/${year} có ${inMonth.length} sinh nhật.`,
+    ...sections,
+    `Muốn xem tên, tag bot và hỏi, ví dụ: "sinh nhật tháng ${month} khối BO".`,
+  ].join("\n\n");
 }
 
 /** "📅 Sinh nhật tháng 12/2026 (3 người):" then one line per day. */

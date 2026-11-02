@@ -61,6 +61,8 @@ export interface Config {
     columns: string[];
     /** Only rows with this value in this column count as current members. */
     activeFilter?: { column: string; value: string };
+    /** End-of-month message counts by these columns instead of listing names. */
+    summaryBy: { label: string; column: string }[];
   };
 }
 
@@ -113,7 +115,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     webAudience: env.WEB_AUDIENCE === "admin" ? "admin" : /^(off|none|0|false)$/i.test(env.WEB_AUDIENCE ?? "") ? "off" : "all",
     adminOnlyFields: env.ADMIN_ONLY_FIELDS === undefined ? ["Đại lý nắm"] : list(env.ADMIN_ONLY_FIELDS),
     members: env.MEMBERS_SHEET?.trim()
-      ? { url: env.MEMBERS_SHEET.trim(), columns: list(env.MEMBERS_COLUMNS), activeFilter: parseColumnValue(env.MEMBERS_ACTIVE) }
+      ? { url: env.MEMBERS_SHEET.trim(), columns: list(env.MEMBERS_COLUMNS), activeFilter: parseColumnValue(env.MEMBERS_ACTIVE), summaryBy: list(env.MEMBERS_SUMMARY_BY).map(parseSummaryColumn) }
       : undefined,
   };
 }
@@ -140,6 +142,12 @@ function parseColumnValue(entry: string | undefined): { column: string; value: s
   const split = entry.indexOf("=");
   if (split < 1) throw new Error(`Invalid MEMBERS_ACTIVE "${entry}", expected <column>=<value>`);
   return { column: entry.slice(0, split).trim(), value: entry.slice(split + 1).trim() };
+}
+
+/** `Khối=KHỐI` (label=column) or just `KHỐI`. */
+function parseSummaryColumn(entry: string): { label: string; column: string } {
+  const split = entry.indexOf("=");
+  return split < 1 ? { label: entry, column: entry } : { label: entry.slice(0, split).trim(), column: entry.slice(split + 1).trim() };
 }
 
 /** `https://example.com/gia` or `Bảng giá=https://docs.google.com/...` */
