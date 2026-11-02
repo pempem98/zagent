@@ -54,6 +54,14 @@ export interface Config {
   webAudience: Audience | "off";
   /** Fields of tool results that only admins may see (e.g. which agency holds a unit); removed before the model reads them. */
   adminOnlyFields: string[];
+  /** Google Sheet of members, for birthday reminders and questions about the list. */
+  members?: {
+    url: string;
+    /** Columns the model may see; empty means all but the ones that look private. */
+    columns: string[];
+    /** Only rows with this value in this column count as current members. */
+    activeFilter?: { column: string; value: string };
+  };
 }
 
 /**
@@ -104,6 +112,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     userRepliesPerHour: env.USER_REPLIES_PER_HOUR?.trim() ? Math.max(0, Number(env.USER_REPLIES_PER_HOUR) || 0) : 20,
     webAudience: env.WEB_AUDIENCE === "admin" ? "admin" : /^(off|none|0|false)$/i.test(env.WEB_AUDIENCE ?? "") ? "off" : "all",
     adminOnlyFields: env.ADMIN_ONLY_FIELDS === undefined ? ["Đại lý nắm"] : list(env.ADMIN_ONLY_FIELDS),
+    members: env.MEMBERS_SHEET?.trim()
+      ? { url: env.MEMBERS_SHEET.trim(), columns: list(env.MEMBERS_COLUMNS), activeFilter: parseColumnValue(env.MEMBERS_ACTIVE) }
+      : undefined,
   };
 }
 
@@ -121,6 +132,14 @@ function parseAdmin(entry: string): AdminRef {
     throw new Error(`Invalid ADMINS entry "${entry}", expected bot:<id> or personal:<id>`);
   }
   return { channel, id };
+}
+
+/** `TÌNH TRẠNG=Đang làm`; empty means no filter. */
+function parseColumnValue(entry: string | undefined): { column: string; value: string } | undefined {
+  if (!entry?.trim()) return undefined;
+  const split = entry.indexOf("=");
+  if (split < 1) throw new Error(`Invalid MEMBERS_ACTIVE "${entry}", expected <column>=<value>`);
+  return { column: entry.slice(0, split).trim(), value: entry.slice(split + 1).trim() };
 }
 
 /** `https://example.com/gia` or `Bảng giá=https://docs.google.com/...` */

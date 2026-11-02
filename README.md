@@ -291,6 +291,31 @@ Một lịch chạy một lần, lặp hằng ngày, hằng tuần, hoặc theo 
 
 Mỗi trường nhận số, danh sách (`1,15`), khoảng (`8-20`) và bước (`*/30`); thứ là 0-7, trong đó 0 và 7 đều là Chủ nhật; không nhận tên tháng, tên thứ (`MON`, `JAN`). Các lần chạy phải cách nhau ít nhất 5 phút, vì mỗi lần là một lượt gọi model. Lịch cron chạy mãi cho tới khi bị huỷ.
 
+## Sinh nhật và danh sách thành viên
+
+Bot đọc danh sách thành viên từ một Google Sheet (`MEMBERS_SHEET`), nhắc sinh nhật trong một nhóm và trả lời câu hỏi về danh sách đó. Mỗi lần nhắc, bot đọc lại sheet; khi trả lời câu hỏi, bot dùng bản đọc không quá 5 phút trước. Vì vậy sửa sheet là bot thấy ngay, không cần `/reload`.
+
+1. Đặt trong `.env`, rồi `docker compose restart`:
+   ```
+   MEMBERS_SHEET=https://docs.google.com/spreadsheets/d/xxxx/edit?gid=0
+   MEMBERS_ACTIVE=TÌNH TRẠNG=Đang làm
+   ```
+2. Admin nhắn `/birthdays check` để xem bot hiểu sheet thế nào: cột họ tên, cột ngày sinh, các cột AI được xem, các cột luôn ẩn, và ngày mai nhắc ai.
+3. Admin nhắn `/birthdays <tên hoặc ID nhóm>` để bật nhắc cho nhóm đó. Từ đó:
+   - 9h sáng mỗi ngày, nếu ngày mai có người sinh nhật thì gửi tên những người đó vào nhóm; nếu không có ai thì không gửi gì.
+   - Ngày cuối tháng, gửi thêm danh sách sinh nhật của tháng sau, xếp theo ngày.
+
+   Tắt bằng `/tasks` rồi `/deltask <mã>`. Chỉ admin mới tắt được.
+
+Trong nhóm đã bật nhắc, thành viên tag bot và hỏi bằng lời thường, ví dụ: "tháng này có bao nhiêu sinh nhật", "tuần này sinh nhật ai", "sinh nhật anh Tuân ngày nào", "khối BO có bao nhiêu người ở mỗi văn phòng". Ở chỗ khác, kể cả chat riêng với khách, chỉ admin mới tra được danh sách.
+
+Cách bot đọc sheet:
+- Cột họ tên là cột có tiêu đề "Họ tên", "Họ và tên" hoặc "Tên".
+- Ngày sinh lấy từ các cột có tiêu đề chứa "ngày sinh" hoặc "sinh nhật". Cột có chữ "thực" được ưu tiên, nên `NGÀY SINH THỰC` đè lên `NGÀY SINH (theo giấy tờ)`. Bot đọc được `dd/mm/yyyy`, `dd/mm`, `yyyy-mm-dd`; người sinh 29/2 được nhắc vào 28/2 những năm không nhuận.
+- `MEMBERS_ACTIVE=<cột>=<giá trị>` giới hạn nhắc và tra cứu vào những dòng mang giá trị đó, ví dụ chỉ người đang làm. Khi hỏi cụ thể, AI vẫn tra được cả người đã nghỉ.
+- **Cột riêng tư không bao giờ đến tay AI**: SĐT, email, CCCD/CMND, ngày cấp, nơi cấp, hộ khẩu, địa chỉ, tài khoản, lương, thuế, bảo hiểm. Muốn chỉ định chính xác các cột AI được xem thì liệt kê chúng trong `MEMBERS_COLUMNS` (cách nhau bằng dấu phẩy).
+- Nếu có `GOOGLE_SERVICE_ACCOUNT_FILE`, bot đọc sheet bằng tài khoản đó. Khi ấy có thể tắt chia sẻ công khai và chỉ chia sẻ sheet cho email của service account (quyền Người xem). Nên làm vậy khi sheet có thông tin cá nhân.
+
 ## Người dùng, nhóm và nhật ký tin nhắn
 
 Bot ghi lại mọi người và mọi nhóm nó gặp, cùng toàn bộ tin nhắn, mà không gọi model nên không tốn token:
@@ -490,6 +515,7 @@ src/
     http-tools.ts     Công cụ gọi API khai báo trong tools.json
     web.ts            Tìm kiếm web, đọc trang web
     scheduler.ts      Lịch hẹn và tác vụ định kỳ
+    members.ts        Sheet thành viên: nhắc sinh nhật, tra cứu danh sách
     admin.ts          Chuyển câu hỏi cho admin, nhận câu trả lời
     mcp.ts            Kết nối MCP server
 mcp/

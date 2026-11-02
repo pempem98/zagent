@@ -21,8 +21,9 @@ import { DriveSync } from "./tools/drive.js";
 import { HttpTools } from "./tools/http-tools.js";
 import { KnowledgeBase } from "./tools/knowledge.js";
 import { McpHub } from "./tools/mcp.js";
+import { MemberSheet } from "./tools/members.js";
 import { Procedures } from "./tools/procedures.js";
-import { parseTaskCommand, Scheduler, TASK_USAGE } from "./tools/scheduler.js";
+import { parseSchedule, parseTaskCommand, Scheduler, TASK_USAGE } from "./tools/scheduler.js";
 import { webTools } from "./tools/web.js";
 
 try {
@@ -136,6 +137,24 @@ const mcp = new McpHub();
 // WEB_AUDIENCE=off removes web search and page reading altogether.
 const web = config.webAudience === "off" ? [] : webTools(config.webAudience, models);
 const memory = new UserMemory(data("memories.json"));
+const members = config.members ? await connectMembers(config.members) : undefined;
+
+/** The member sheet, read as the service account when there is one so the sheet need not be public. */
+async function connectMembers(options: NonNullable<typeof config.members>): Promise<MemberSheet> {
+  let auth: ServiceAccountAuth | undefined;
+  if (config.googleServiceAccountFile) {
+    try {
+      auth = new ServiceAccountAuth(JSON.parse(await readFile(config.googleServiceAccountFile, "utf8")), [DRIVE_READONLY_SCOPE]);
+    } catch (error) {
+      console.warn(`[members] cannot use service-account key file: ${(error as Error).message}; reading the sheet by its public link only`);
+    }
+  }
+  return new MemberSheet(
+    { ...options, auth, accessHint: auth ? `Chia sẻ sheet cho ${auth.email} (quyền Người xem).` : undefined },
+    // Customers talk to this bot too: the list is only for admins and the groups that get the reminders.
+    (message, isAdmin) => isAdmin || (message.isGroup && scheduler.hasJob("birthdays", message.channel, message.threadId)),
+  );
+}
 
 const conversations = new ConversationStore(data("conversations.json"), async (previous, transcript) => {
   const response = await models.generate({
@@ -153,6 +172,17 @@ const scheduler = new Scheduler(data("tasks.json"), (task) =>
     // System jobs are carried out directly, with no model call, and reported to the admin who set them.
     if (task.job) {
       console.log(`[scheduler] running ${task.job.type} job #${task.id}`);
+      if (task.job.type === "birthdays") {
+        // A sheet that cannot be read is the admins' to fix; the group hears nothing and the task stays.
+        const reminders = members
+          ? await members.reminders().catch((error: Error) => {
+              notifyAdmins(`Lịch nhắc sinh nhật #${task.id} không chạy được: ${error.message}`);
+              return [];
+            })
+          : (notifyAdmins(`Lịch nhắc sinh nhật #${task.id} bỏ qua: chưa đặt MEMBERS_SHEET trong .env.`), []);
+        for (const text of reminders) await say(task.channel, task, text);
+        return;
+      }
       const report =
         task.job.type === "reload"
           ? await reloadAll()
@@ -220,6 +250,7 @@ const agent = new Agent({
     ...web,
     ...memory.tools(),
     ...scheduler.tools(),
+    ...(members?.tools() ?? []),
     ...broadcaster.tools(),
     ...contacts.tools(),
     ...moderation.tools(),
@@ -247,6 +278,8 @@ const agent = new Agent({
 
 await Promise.all([embedder?.load(), contacts.load(), moderation.load(),instructions.load(), httpTools.load(), procedures.load(), memory.load(), conversations.load(), desk.load(), mcp.connect(config.mcpConfigFile)]);
 await knowledge.start(config.knowledgeRefreshMinutes);
+// Read the member sheet once now, so the model sees its column names from the first question.
+void members?.load().catch((error: Error) => console.error("[members]", error.message));
 
 const HELP = `Lệnh có thể dùng:
 /help - xem danh sách lệnh này
@@ -272,6 +305,8 @@ const ADMIN_HELP = `
 /confirm <mã>, /cancel <mã> - gửi hoặc huỷ một bản nháp thông báo
 /keys - xem model đang dùng và khoá API nào đang bị chặn vì hết hạn mức
 /unblock <tên> - mở lại một khoá API sau khi nạp thêm
+/birthdays <tên hoặc ID nhóm> - bật nhắc sinh nhật trong nhóm: 9h hôm trước, và danh sách tháng sau vào ngày cuối tháng
+/birthdays check - xem bot đọc sheet thành viên thế nào và sắp nhắc những ai
 #<mã> <nội dung> - trả lời một câu hỏi đang chờ`;
 
 /** Commands and admin replies that are answered without the model. Null means "let the agent answer". */
@@ -299,7 +334,7 @@ async function handleCommand(message: IncomingMessage, isAdmin: boolean): Promis
     if (taskBody && !taskBody[1]) return TASK_USAGE;
     let outcome: string;
     try {
-      outcome = taskRemoval ? await scheduler.cancel(message, Number(taskRemoval[1])) : await scheduler.create(message, isAdmin, parseTaskCommand(taskBody![1]!));
+      outcome = taskRemoval ? await scheduler.cancel(message, Number(taskRemoval[1]), isAdmin) : await scheduler.create(message, isAdmin, parseTaskCommand(taskBody![1]!));
     } catch (error) {
       return taskRemoval ? (error as Error).message : `${(error as Error).message}\n\n${TASK_USAGE}`;
     }
@@ -354,6 +389,8 @@ async function handleCommand(message: IncomingMessage, isAdmin: boolean): Promis
   if (unban) return moderation.unban(unban[1]!);
   if (text === "/ban" || text === "/unban") return "Cách dùng: /ban <ID> [lý do], /unban <ID>. Nhắn /top hoặc /users để xem ID.";
   if (text === "/bans") return moderation.describeBans();
+  const birthdays = /^\/birthdays(?:\s+([\s\S]+))?$/.exec(text);
+  if (birthdays) return birthdaysCommand(message, birthdays[1]?.trim() ?? "");
   if (text === "/procedures") return procedures.list();
   if (text === "/tickets") return desk.listOpen();
   if (text === "/keys") {
@@ -364,6 +401,35 @@ async function handleCommand(message: IncomingMessage, isAdmin: boolean): Promis
   const unblock = /^\/unblock\s+(\S+)$/.exec(text)?.[1]?.toLowerCase();
   if (unblock) return models.unblock(unblock) ? `Đã mở lại khoá "${unblock}".` : `Khoá "${unblock}" không bị chặn.`;
   return desk.handleAnswer(message);
+}
+
+const BIRTHDAYS_USAGE = `Cách dùng:
+/birthdays <tên hoặc ID nhóm> - bật nhắc sinh nhật trong nhóm đó (9h sáng hôm trước; ngày cuối tháng gửi danh sách tháng sau)
+/birthdays check - kiểm tra sheet và xem sắp nhắc những ai
+Tắt: /tasks rồi /deltask <mã>.`;
+
+/** Admin command behind `/birthdays`; returns the text to answer with. */
+async function birthdaysCommand(message: IncomingMessage, argument: string): Promise<string> {
+  if (!members) return "Chưa cấu hình sheet thành viên: đặt MEMBERS_SHEET=<link Google Sheet> trong .env rồi khởi động lại bot.";
+  if (!argument) return BIRTHDAYS_USAGE;
+  if (argument === "check") return members.check().catch((error: Error) => error.message);
+  const group = contacts.findGroup(argument);
+  if (!group) return `Không tìm thấy nhóm "${argument}". Nhắn /groups để xem tên và ID các nhóm.`;
+  const name = group.name || group.threadId;
+  if (scheduler.hasJob("birthdays", group.channel, group.threadId)) return `Nhóm ${name} đã bật nhắc sinh nhật. Xem bằng /tasks.`;
+  // Read the sheet now, so a sheet the bot cannot read is reported today rather than at 9h tomorrow.
+  const summary = await members.check().catch((error: Error) => error);
+  if (summary instanceof Error) return summary.message;
+  const task = await scheduler.addJob(
+    message,
+    parseSchedule({ cron: "0 9 * * *" }),
+    { type: "birthdays" },
+    "Nhắc sinh nhật: 9h hôm trước, và danh sách tháng sau vào ngày cuối tháng",
+    group,
+  );
+  const outcome = `Đã bật nhắc sinh nhật cho nhóm ${name} (mã ${task.id}): 9h sáng mỗi ngày nhắc sinh nhật ngày mai; ngày cuối tháng gửi danh sách tháng sau. Thành viên nhóm có thể hỏi bot về danh sách (nhớ tag bot).\n\n${summary}`;
+  conversations.append(conversationKey(message), `/birthdays ${argument}`, outcome);
+  return outcome;
 }
 
 // One job at a time per conversation, so replies stay in order and share memory safely.

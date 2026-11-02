@@ -14,7 +14,11 @@ export interface Schedule {
 }
 
 /** Work the bot does itself at the due time, with no model call. */
-export type ScheduledJob = { type: "broadcast"; text: string; audience: "users" | "groups" | "all" } | { type: "reload" };
+export type ScheduledJob =
+  | { type: "broadcast"; text: string; audience: "users" | "groups" | "all" }
+  | { type: "reload" }
+  /** Birthday reminders from the member sheet, posted in the task's own chat (a group). */
+  | { type: "birthdays" };
 
 export interface ScheduledTask {
   id: number;
@@ -114,13 +118,24 @@ export class Scheduler {
     );
   }
 
-  /** Schedules a system job on behalf of an admin; results are reported in the admin's own chat. */
-  async addJob(admin: IncomingMessage, schedule: Schedule, job: ScheduledJob, description: string): Promise<ScheduledTask> {
+  /**
+   * Schedules a system job on behalf of an admin. It runs in the admin's own chat, or in `group`
+   * when given; such a task can still be listed and cancelled from the admin's chat.
+   */
+  async addJob(
+    admin: IncomingMessage,
+    schedule: Schedule,
+    job: ScheduledJob,
+    description: string,
+    group?: { channel: ChannelId; threadId: string },
+  ): Promise<ScheduledTask> {
+    const elsewhere = group && !(group.channel === admin.channel && group.threadId === admin.threadId);
     const task: ScheduledTask = {
       id: this.file.data.next++,
-      channel: admin.channel,
-      threadId: admin.threadId,
-      isGroup: admin.isGroup,
+      channel: group?.channel ?? admin.channel,
+      threadId: group?.threadId ?? admin.threadId,
+      isGroup: group ? true : admin.isGroup,
+      ...(elsewhere ? { createdIn: `${admin.channel}:${admin.threadId}` } : {}),
       senderId: admin.senderId,
       senderName: admin.senderName,
       ...schedule,
@@ -130,6 +145,11 @@ export class Scheduler {
     this.file.data.tasks.push(task);
     await this.file.save();
     return task;
+  }
+
+  /** Whether a job of this type delivers to this chat. */
+  hasJob(type: ScheduledJob["type"], channel: ChannelId, threadId: string): boolean {
+    return this.file.data.tasks.some((task) => task.job?.type === type && task.channel === channel && task.threadId === threadId);
   }
 
   private remove(id: number): void {
@@ -197,9 +217,11 @@ export class Scheduler {
   }
 
   /** Cancels one of this chat's tasks; behind both the cancel_task tool and the /deltask command. */
-  async cancel(message: IncomingMessage, id: number): Promise<string> {
+  async cancel(message: IncomingMessage, id: number, isAdmin: boolean): Promise<string> {
     const task = this.inThread(message).find((candidate) => candidate.id === id);
     if (!task) throw new Error("Không có lịch hẹn với mã đó trong cuộc trò chuyện này");
+    // System jobs an admin set up for a group are not for its members to switch off.
+    if (task.job && !isAdmin) throw new Error("Chỉ quản trị viên mới huỷ được lịch này");
     this.remove(task.id);
     await this.file.save();
     return `Đã huỷ lịch hẹn ${task.id}.`;
@@ -284,8 +306,8 @@ export class Scheduler {
           required: ["id"],
         },
         audience: "all",
-        run: async (args, { message }) => {
-          return this.cancel(message, Number(args.id));
+        run: async (args, { message, isAdmin }) => {
+          return this.cancel(message, Number(args.id), isAdmin);
         },
       },
     ];
