@@ -1,6 +1,7 @@
 node_modules/
 data/
 .env
+.env.bak*
 
 # Local connection settings; may hold internal URLs or API keys
 mcp.json

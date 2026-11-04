@@ -1,4 +1,3 @@
-import { readFile } from "node:fs/promises";
 import type { Tool } from "../ai/tools.js";
 import type { IncomingMessage } from "../channels/types.js";
 import type { TokenSource } from "../google/auth.js";
@@ -49,30 +48,9 @@ export interface MemberSheetOptions {
    * message lists every name, day by day.
    */
   summaryBy: { label: string; column: string }[];
-  /** Text file of sample wishes, one per line, `{ten}` standing for "anh Chiến"; DEFAULT_WISHES when missing. */
-  wishesFile?: string;
   /** Shown under each name in the reminder, e.g. Chức vụ, Phòng, Vùng, Khối; empty cells are left out. */
   details: { label: string; column: string }[];
-  /**
-   * Asks a model to write the wishes; the samples then only set the tone. Without it, or when the
-   * model fails, the samples are sent as they are.
-   */
-  generate?: (prompt: string) => Promise<string>;
 }
-
-/** Sample wishes sent under each name; `{ten}` becomes "anh Chiến", "chị Lư" or the bare name. */
-export const DEFAULT_WISHES = [
-  "🎂 Chúc mừng sinh nhật {ten}! Chúc {ten} tuổi mới thật nhiều sức khoẻ, niềm vui và thành công rực rỡ 🎉✨",
-  "🎉 Happy birthday {ten}! Chúc {ten} tuổi mới chốt deal ầm ầm, tiền về đầy túi, luôn rạng rỡ như hôm nay 💰🥳",
-  "🌸 Mừng sinh nhật {ten}! Chúc {ten} một năm mới an yên, hạnh phúc bên gia đình và gặt hái thật nhiều thành công 💐💖",
-  "🥳 Sinh nhật vui vẻ {ten}! Chúc {ten} luôn tràn đầy năng lượng, công việc hanh thông, mọi điều như ý 🍀🎈",
-  "🎈 Chúc mừng sinh nhật {ten}! Tuổi mới chúc {ten} vạn sự như ý, sức khoẻ dồi dào, sự nghiệp thăng hoa 🚀🌟",
-  "💐 Chúc {ten} sinh nhật thật ý nghĩa! Mong {ten} luôn vui vẻ, trẻ trung và thành công hơn nữa trong năm mới 🎂🎊",
-  "🎁 Happy birthday {ten}! Chúc {ten} tuổi mới nhiều may mắn, nhiều niềm vui và thật nhiều quà nhé 😍🎉",
-  "🌟 Chúc mừng sinh nhật {ten}! Cảm ơn {ten} đã luôn đồng hành cùng cả nhà. Chúc {ten} tuổi mới bùng nổ thành công 💪🔥",
-  "🍰 Sinh nhật vui vẻ nhé {ten}! Chúc {ten} luôn khoẻ mạnh, hạnh phúc, cười thật nhiều và đạt mọi mục tiêu đã đặt ra 🎯😄",
-  "🎊 Chúc mừng sinh nhật {ten}! Chúc {ten} một tuổi mới rực rỡ, gia đình êm ấm, công việc thuận buồm xuôi gió ⛵💖",
-];
 
 /** Rows are fetched again after this long, so edits to the sheet show up without a reload. */
 const CACHE_MS = 5 * 60_000;
@@ -124,7 +102,7 @@ export class MemberSheet {
   /**
    * The messages to post today: tomorrow's birthdays, and on the last day of a month, next month's
    * overview. `preview` adds that overview on any day and says so when tomorrow has no birthday.
-   * Kinds in `skip` were sent already and are not written again (nor are their wishes).
+   * Kinds in `skip` were sent already and are not written again.
    */
   async reminders(
     now = Date.now(),
@@ -142,7 +120,6 @@ export class MemberSheet {
           .map(({ label, header }) => (member.fields[header] ? `${label}: ${member.fields[header]}` : ""))
           .filter(Boolean)
           .join(" | ");
-      const wishes = await this.writeWishes(due, tomorrow, describe);
       messages.push({
         kind: "tomorrow",
         text: [
@@ -151,9 +128,6 @@ export class MemberSheet {
             const about = describe(member);
             return [`🎈 ${member.name}${member.birthday!.year ? ` (${member.birthday!.year})` : ""}`, ...(about ? [`     ${about}`] : [])];
           }),
-          "",
-          "💌 Lời chúc mẫu, cả nhà copy gửi luôn nhé:",
-          ...wishes.map((wish) => `• ${wish}`),
         ].join("\n"),
       });
     } else if (preview && !due.length) {
@@ -201,7 +175,7 @@ export class MemberSheet {
       {
         name: "members_query",
         description:
-          "Tra danh sách thành viên/nhân sự trong Google Sheet: sinh nhật (hôm nay, tuần này, tháng này, của một người), đếm số người, lọc hoặc thống kê theo cột (chức vụ, khối, văn phòng...). Mặc định chỉ tính người đang làm. 'total' là tổng số người khớp; 'rows' chỉ gồm tối đa 'limit' người đầu tiên, nên khi hỏi 'bao nhiêu' hãy trả lời theo 'total'." +
+          "Tra danh sách thành viên/nhân sự trong Google Sheet: sinh nhật (hôm nay, tuần này, tháng này, của một người), đếm số người, lọc hoặc thống kê theo cột (chức vụ, khối, văn phòng...). Luôn chỉ tính người đang làm (bỏ qua người đã nghỉ, điều chuyển); chỉ tính cả họ khi người hỏi nói rõ muốn xem người đã nghỉ/điều chuyển. 'total' là tổng số người khớp; 'rows' chỉ gồm tối đa 'limit' người đầu tiên, nên khi hỏi 'bao nhiêu' hãy trả lời theo 'total'." +
           (columns ? ` Các cột: ${columns.join(", ")}.` : ""),
         parameters: {
           type: "object",
@@ -219,7 +193,7 @@ export class MemberSheet {
               description: "Chỉ lấy người có sinh nhật trong N ngày tới, tính từ hôm nay: 0 = hôm nay, 1 = hôm nay và ngày mai, 6 = 7 ngày tới.",
             },
             group_by: { type: "string", description: `Đếm số người theo từng giá trị của một cột, hoặc "${BY_BIRTH_MONTH}" để đếm sinh nhật theo tháng.` },
-            include_inactive: { type: "boolean", description: "Tính cả người đã nghỉ. Mặc định false." },
+            include_inactive: { type: "boolean", description: "Tính cả người đã nghỉ, điều chuyển. Chỉ đặt true khi người hỏi nói rõ muốn xem những người này; không thì bỏ trống." },
             limit: { type: "integer", description: `Số người tối đa trả về trong 'rows' (mặc định ${DEFAULT_LIMIT}, tối đa ${MAX_LIMIT}).` },
           },
         },
@@ -235,11 +209,14 @@ export class MemberSheet {
   async query(args: Record<string, unknown>): Promise<unknown> {
     const sheet = await this.load();
     const today = vnDay(Date.now());
-    let members = sheet.members.filter((member) => args.include_inactive === true || member.active);
+    const filters = args.filters && typeof args.filters === "object" ? Object.entries(args.filters as Record<string, unknown>) : [];
+    // A filter on the status column itself ("TÌNH TRẠNG": "Nghỉ") is an explicit ask for those rows.
+    const statusColumn = this.options.activeFilter ? findColumn(sheet.columns, this.options.activeFilter.column) : undefined;
+    const asksStatus = statusColumn !== undefined && filters.some(([column]) => findColumn(sheet.columns, column) === statusColumn);
+    let members = sheet.members.filter((member) => args.include_inactive === true || asksStatus || member.active);
 
     const name = fold(String(args.name ?? ""));
     if (name) members = members.filter((member) => fold(member.name).includes(name));
-    const filters = args.filters && typeof args.filters === "object" ? Object.entries(args.filters as Record<string, unknown>) : [];
     for (const [column, value] of filters) {
       const header = findColumn(sheet.columns, column);
       const wanted = fold(String(value ?? ""));
@@ -281,47 +258,6 @@ export class MemberSheet {
       })),
       ...(members.length > limit ? { note: `Chỉ hiện ${limit}/${members.length} người.` } : {}),
     };
-  }
-
-  /** One wish per person, in order: written by the model when there is one, else picked from the samples. */
-  private async writeWishes(people: Member[], day: Day, describe: (member: Member) => string): Promise<string[]> {
-    const samples = await this.wishes();
-    // A different sample for each person, and a different starting point each day.
-    const start = Math.round(toUtc(day) / DAY_MS);
-    const fallback = people.map((member, index) => samples[(start + index) % samples.length]!.replaceAll("{ten}", callName(member)));
-    if (!this.options.generate) return fallback;
-    const prompt = [
-      `Viết lời chúc mừng sinh nhật cho ${people.length} đồng nghiệp trong công ty, để cả nhóm Zalo copy gửi.`,
-      "Yêu cầu: tiếng Việt, ấm áp, vui, hợp môi trường công sở; 1-2 câu, dưới 40 từ; có 2-4 emoji; gọi đúng cách gọi được cho;",
-      "mỗi người một lời chúc khác nhau, có thể nhắc nhẹ đến công việc của họ nhưng không nhắc đến tuổi.",
-      "Phong cách tham khảo:",
-      ...samples.slice(0, 5).map((sample) => `- ${sample.replaceAll("{ten}", "anh Nam")}`),
-      "Người nhận:",
-      ...people.map((member, index) => `${index + 1}. Cách gọi: "${callName(member)}"${describe(member) ? `; ${describe(member)}` : ""}`),
-      `Chỉ trả về một mảng JSON gồm đúng ${people.length} chuỗi, theo đúng thứ tự trên, không giải thích gì thêm.`,
-    ].join("\n");
-    try {
-      const text = await this.options.generate(prompt);
-      const parsed: unknown = JSON.parse(/\[[\s\S]*\]/.exec(text)?.[0] ?? "null");
-      if (Array.isArray(parsed) && parsed.length === people.length && parsed.every((wish) => typeof wish === "string" && wish.trim())) {
-        return parsed.map((wish: string) => wish.trim());
-      }
-      throw new Error(`unexpected answer: ${text.slice(0, 200)}`);
-    } catch (error) {
-      console.warn(`[members] model could not write the wishes, using the samples: ${(error as Error).message}`);
-      return fallback;
-    }
-  }
-
-  /** Read on every reminder, so edits to the file apply the next morning without a restart. */
-  private async wishes(): Promise<string[]> {
-    if (!this.options.wishesFile) return DEFAULT_WISHES;
-    const text = await readFile(this.options.wishesFile, "utf8").catch(() => "");
-    const lines = text
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter((line) => line && !line.startsWith("#"));
-    return lines.length ? lines : DEFAULT_WISHES;
   }
 
   private async read(): Promise<LoadedSheet> {
@@ -489,15 +425,6 @@ function monthList(members: Member[], year: number, month: number): string {
     .sort((a, b) => a[0] - b[0])
     .map(([day, names]) => `${pad(day)}/${pad(month)}: ${names.sort((a, b) => a.localeCompare(b, "vi")).join(", ")}`);
   return [`📅 Sinh nhật tháng ${month}/${year} (${total} người):`, ...lines].join("\n");
-}
-
-/** "anh Chiến", "chị Lư": the given name (last word) with a title from a gender column; the full name when there is none. */
-function callName(member: Member): string {
-  const gender = fold(Object.entries(member.fields).find(([column]) => /giới\s*tính|gender/i.test(column))?.[1] ?? "");
-  const given = member.name.trim().split(/\s+/).at(-1) ?? member.name;
-  if (/^(nam|male|m)$/.test(gender)) return `anh ${given}`;
-  if (/^(nu|female|f)$/.test(gender)) return `chị ${given}`;
-  return member.name;
 }
 
 /** Lower case, no accents, single spaces: "Đặng  Thị" and "dang thi" compare equal. */

@@ -308,7 +308,6 @@ Bot đọc danh sách thành viên từ một Google Sheet (`MEMBERS_SHEET`), nh
 
    Dưới tên mỗi người, tin nhắc ghi năm sinh và các cột liệt kê trong `MEMBERS_REMINDER_DETAILS` (dạng `nhãn=cột`, ví dụ `Chức vụ=CHỨC VỤ,Phòng=TÊN PHÒNG BO,Vùng=MÃ CHI NHÁNH/ VÙNG KD,Khối=KHỐI`); ô trống được bỏ qua.
 
-   Tin nhắc kèm một lời chúc cho từng người, do AI viết, gọi "anh"/"chị" + tên theo cột giới tính. Các mẫu trong `workspace/birthday-wishes.txt` dùng làm ví dụ về giọng văn cho AI. Nếu AI lỗi, bot gửi chính các mẫu đó, mỗi ngày xoay vòng một mẫu khác. Trong file, mỗi dòng là một lời chúc, `{ten}` là chỗ điền "anh Chiến"; dòng bắt đầu bằng `#` bị bỏ qua. Bot đọc lại file mỗi lần nhắc nên sửa xong không cần khởi động lại; xoá file thì bot dùng bộ mẫu có sẵn.
 
    `/birthdays preview` cho admin xem trước cả hai tin bất cứ lúc nào. Tin xem trước chỉ gửi cho admin, không gửi vào nhóm.
 
