@@ -43,6 +43,8 @@ export interface Config {
   driveSources: string[];
   /** First entry receives escalated questions; all entries get admin-only tools and commands. */
   admins: AdminRef[];
+  /** What the user is told, word for word, once their question has gone to the admin; empty lets the model word it. */
+  escalationReply: string;
   mcpConfigFile: string;
   /** Days that message logs and console log files are kept; 0 keeps them forever. */
   logRetentionDays: number;
@@ -110,6 +112,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
         : undefined,
     driveSources: list(env.GOOGLE_DRIVE_FOLDERS),
     admins: list(env.ADMINS).map(parseAdmin),
+    escalationReply: env.ESCALATION_REPLY?.trim() ?? "",
     mcpConfigFile: env.MCP_CONFIG || "mcp.json",
     logRetentionDays: env.LOG_RETENTION_DAYS?.trim() ? Math.max(0, Number(env.LOG_RETENTION_DAYS) || 0) : 30,
     groupRepliesPerHour: env.GROUP_REPLIES_PER_HOUR?.trim() ? Math.max(0, Number(env.GROUP_REPLIES_PER_HOUR) || 0) : 30,

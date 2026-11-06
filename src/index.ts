@@ -166,7 +166,7 @@ const conversations = new ConversationStore(data("conversations.json"), async (p
 
 const desk = new AdminDesk(hub, config.admins, data("tickets.json"), (ticket, answer) => {
   conversations.append(conversationKey(ticket), ticket.question, `Quản trị viên đã trả lời: ${answer}`);
-});
+}, config.escalationReply);
 
 const scheduler = new Scheduler(data("tasks.json"), (task) =>
   enqueue(conversationKey(task), async () => {

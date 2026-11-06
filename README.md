@@ -394,6 +394,7 @@ Xem và huỷ lịch bằng cách bảo bot ("liệt kê các lịch hẹn", "hu
 
 1. Nhắn `/id` cho bot để lấy ID của bạn.
 2. Ghi vào `.env`: `ADMINS=bot:<id>` (nhiều người thì cách nhau bằng dấu phẩy), rồi khởi động lại.
+3. Tuỳ chọn: `ESCALATION_REPLY=<câu>` là câu bot nhắn lại nguyên văn cho người hỏi mỗi khi chuyển câu hỏi cho admin. Bỏ trống thì bot tự viết.
 
 Khi bot không tìm được câu trả lời, hoặc khách muốn gặp người hỗ trợ, bot gửi cho admin đầu tiên trong danh sách một tin dạng:
 

@@ -34,6 +34,8 @@ export class AdminDesk {
     path: string,
     /** Lets the conversation memory know what the admin told the user. */
     private readonly onAnswered: (ticket: Ticket, answer: string) => void,
+    /** Sentence the user must be told once a question is filed; empty lets the model word it. */
+    private readonly escalationReply = "",
   ) {
     this.file = new JsonFile<Store>(path, { next: 1, open: [] });
   }
@@ -97,7 +99,7 @@ export class AdminDesk {
           if (!question) throw new Error("Thiếu nội dung câu hỏi");
           const pending = this.store.open.filter((t) => t.channel === message.channel && t.threadId === message.threadId);
           if (pending.length >= MAX_OPEN_PER_THREAD) {
-            return "Hội thoại này đã có nhiều câu hỏi đang chờ admin. Hãy báo người dùng chờ phản hồi, không gửi thêm.";
+            return `Hội thoại này đã có nhiều câu hỏi đang chờ admin. Hãy báo người dùng chờ phản hồi, không gửi thêm.${this.replyInstruction()}`;
           }
 
           const ticket: Ticket = {
@@ -119,10 +121,18 @@ export class AdminDesk {
           await this.hub.send(recipient.channel, { threadId: recipient.id, isGroup: false }, lines.filter(Boolean).join("\n"));
           this.store.open.push(ticket);
           await this.save();
-          return `Đã gửi cho admin, mã #${ticket.code}. Báo người dùng rằng câu hỏi đã được chuyển và sẽ có phản hồi ngay trong cuộc trò chuyện này.`;
+          return `Đã gửi cho admin, mã #${ticket.code}. ${
+            this.escalationReply ? "" : "Báo người dùng rằng câu hỏi đã được chuyển và sẽ có phản hồi ngay trong cuộc trò chuyện này."
+          }${this.replyInstruction()}`;
         },
       },
     ];
+  }
+
+  /** Makes the model pass on the configured sentence instead of wording its own. */
+  private replyInstruction(): string {
+    if (!this.escalationReply) return "";
+    return ` Trả lời người dùng bằng đúng câu sau, nguyên văn, không thêm bớt và không nói là đã chuyển cho ai: "${this.escalationReply}"`;
   }
 
   private save(): Promise<void> {
