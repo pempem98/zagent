@@ -101,7 +101,7 @@ export class MemberSheet {
 
   /**
    * The messages to post today: tomorrow's birthdays, and on the last day of a month, next month's
-   * overview. `preview` adds that overview on any day and says so when tomorrow has no birthday.
+   * overview; a day without birthdays still gets a message saying so. `preview` adds that overview on any day.
    * Kinds in `skip` were sent already and are not written again.
    */
   async reminders(
@@ -130,8 +130,9 @@ export class MemberSheet {
           }),
         ].join("\n"),
       });
-    } else if (preview && !due.length) {
-      messages.push({ kind: "tomorrow", text: `(Ngày mai ${formatDay(tomorrow)} không có ai sinh nhật nên 9h sẽ không gửi tin nhắc.)` });
+    } else if (!due.length && !skip.includes("tomorrow")) {
+      // Said every day, so the group can tell a quiet day from a bot that stopped working.
+      messages.push({ kind: "tomorrow", text: `🎂 Ngày mai, ${WEEKDAYS[weekday(tomorrow)]} ${formatDay(tomorrow)}, không có ai sinh nhật.` });
     }
     if ((tomorrow.day === 1 || preview) && !skip.includes("month")) {
       const month = tomorrow.day === 1 ? tomorrow : addDays({ ...tomorrow, day: 1 }, daysInMonth(tomorrow.year, tomorrow.month));
